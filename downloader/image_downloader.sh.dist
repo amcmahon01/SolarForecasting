@@ -1,0 +1,8 @@
+#!/bin/sh
+# This should be edited and renamed to /home/nowcast/run/image_downloader.sh
+# It will automatically be started as user nowcast by the image_downloader.service
+
+# this needs to replace the existing image_downloader.sh in nowcast/run/...
+# and ./image_downloader.py needs to replace nowcast/code/...
+python3 ~nowcast/code/solar_nowcasting/downloader/image_downloader.py -c alb_dl
+python3 ~nowcast/code/solar_nowcasting/downloader/image_downloader.py -c bnl_dl
