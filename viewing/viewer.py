@@ -24,8 +24,8 @@ class FileWidget(QWidget):
         path = QDir.rootPath()
 
         self.dirModel = QFileSystemModel()
-        self.dirModel.setRootPath(QDir.rootPath())
-        self.dirModel.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs)
+        self.dirModel.setRootPath(self.dirModel.myComputer())
+        self.dirModel.setFilter(QDir.NoDotAndDotDot | QDir.AllDirs | QDir.Drives)
 
         self.fileModel = QFileSystemModel()
         self.fileModel.setFilter(QDir.NoDotAndDotDot |  QDir.Files)
@@ -33,8 +33,8 @@ class FileWidget(QWidget):
         self.treeview.setModel(self.dirModel)
         self.listview.setModel(self.fileModel)
 
-        self.treeview.setRootIndex(self.dirModel.index(path))
-        self.listview.setRootIndex(self.fileModel.index(path))
+        #self.treeview.setRootIndex(self.dirModel.index(path))
+        #self.listview.setRootIndex(self.fileModel.index(path))
 
         self.treeview.setColumnWidth(0, 200)
         self.treeview.hideColumn(1)
