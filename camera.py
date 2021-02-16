@@ -30,7 +30,7 @@ class camera:
 
     # Variable with the suffix '0' means it is for the raw, undistorted image
     def __init__(self, camID, lat, lon, nx0, ny0, xstart, ystart, rotation, beta, azm, c1, c2, c3, \
-                 max_theta=70, nxy=2000, timezone=pytz.timezone("UTC"), path=None):
+                 max_theta=70, nxy=2000, timezone=pytz.timezone("UTC"), fpath=None, overwrite=False, ignore_mask=False):
 
         # Size of the undistorted image, note that the input parameter ny is never used
         if nxy >= 2000:
@@ -42,16 +42,17 @@ class camera:
         self.nx = nxy
         self.ny = nxy
 
-        # Check if the camera object has already been precomputed
-        try:
-            ifile = path + self.camID + '.' + str(self.nx) + '.pkl'
-            with open(ifile, 'rb') as input:
-                print("Loading precomputed camera " +ifile)
-                self.__dict__ = pickle.load(input).__dict__
-                self.timezone = timezone  # overwrite timezone! :?
-            return
-        except:
-            pass;
+        if not overwrite:
+            # Check if the camera object has already been precomputed
+            try:
+                ifile = fpath + self.camID + '.' + str(self.nx) + '.pkl'
+                with open(ifile, 'rb') as input:
+                    print("Loading precomputed camera " +ifile)
+                    self.__dict__ = pickle.load(input).__dict__
+                    self.timezone = timezone  # overwrite timezone! :?
+                return
+            except:
+                pass;
 
 
         self.lat = lat
@@ -69,7 +70,7 @@ class camera:
         self.c3 = c3
         self.max_theta = max_theta
         self.timezone = timezone
-        self.path = path
+        self.path = fpath
 
         # Build the index tuples of the region of interest
         self.roi = np.s_[self.ystart:self.ystart + self.ny0, self.xstart:self.xstart + self.nx0]
@@ -138,17 +139,22 @@ class camera:
         x[valid0] = r * np.sin(phi0[valid0])
         y[valid0] = r * np.cos(phi0[valid0])
 
-        try:
-            invalid = np.load(_path + self.camID + '_mask.npy')
-            if (self.nx <= 1000):
-                tmp = st.block_average2(invalid.astype(np.float32), 2)
-                self.valid &= (tmp < 0.2);
-        except:
-            pass;
+        if ignore_mask:
+            print("\tIgnoring static mask")
+        else:
+            try:
+                invalid = np.load(fpath + self.camID + '_mask.npy')
+                if (self.nx,self.ny) == invalid.shape:
+                    self.valid = ~invalid.astype(np.bool)
+                elif (self.nx <= invalid.shape[0]):
+                    tmp = st.block_average2(invalid.astype(np.float32), 2)
+                    self.valid &= (tmp < 0.2)
+            except:
+                print("Warning: No static mask found, cannot be applied")
 
         self.weights = st.prepare_bin_average2(x, y, xbin, ybin);
 
-        ofile = path + camID + '.' + str(self.nx) + '.pkl'
+        ofile = fpath + camID + '.' + str(self.nx) + '.pkl'
 
         with open(ofile, 'wb') as output:  # Overwrites any existing file.
             print("Saving camera file "+ofile)

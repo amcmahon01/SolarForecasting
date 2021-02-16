@@ -164,47 +164,48 @@ class image:
         Undistort the raw image, set RGBu and red
     """
 
-    def undistort_image(self, day_only=True):
+    def undistort_image(self, day_only=True, skip_sun=False):
 
         if self.rgb is None:
             print("\tCannot undistort the image if the RGB channel is not defined")
             return
 
-        # Get the image acquisition time, this need to be adjusted whenever the naming convention changes
-        t_std = utils.localToUTC(datetime.strptime(self.filename[-18:-4], '%Y%m%d%H%M%S'), self.camera.timezone)
-
-        print("\tUndistortion %s" % (str(t_std)))
-        gatech = ephem.Observer();
-        gatech.date = t_std.strftime('%Y/%m/%d %H:%M:%S')
-        gatech.lat = str(self.camera.lat)
-        gatech.lon = str(self.camera.lon)
-        sun = ephem.Sun();
-        sun.compute(gatech);
-
-        # Sun parameters
-        self.saa = np.pi / 2 - sun.alt;
-        self.saz = np.deg2rad((180 + np.rad2deg(sun.az)) % 360);
-
-        # if False:
-        if day_only and self.saa > np.deg2rad(75):
-            print("\tNight time (sun angle = %f), skipping" % self.saa)
-            self.day_time = 0
-            return
-        else:
-            print("\tDay time (sun angle = %f)" % self.saa)
-            self.day_time = 1
-
-        cos_sz = np.cos(self.saa)
-        cos_g = cos_sz * np.cos(self.camera.theta0) + np.sin(self.saa) * np.sin(self.camera.theta0) * np.cos(
-            self.camera.phi0 - self.saz);
-
         red0 = self.rgb[:, :, 0].astype(np.float32);
         red0[red0 <= 0] = np.nan
 
-        # RuntimeWarnings expected in this block
-        if np.nanmean(red0[(cos_g > 0.995) & (red0 >= 1)]) > 230:
-            mk = cos_g > 0.98
-            red0[mk] = np.nan
+        if skip_sun == False:
+            # Get the image acquisition time, this need to be adjusted whenever the naming convention changes
+            t_std = utils.localToUTC(datetime.strptime(self.filename[-18:-4], '%Y%m%d%H%M%S'), self.camera.timezone)
+
+            print("\tUndistortion %s" % (str(t_std)))
+            gatech = ephem.Observer();
+            gatech.date = t_std.strftime('%Y/%m/%d %H:%M:%S')
+            gatech.lat = str(self.camera.lat)
+            gatech.lon = str(self.camera.lon)
+            sun = ephem.Sun();
+            sun.compute(gatech);
+
+            # Sun parameters
+            self.saa = np.pi / 2 - sun.alt;
+            self.saz = np.deg2rad((180 + np.rad2deg(sun.az)) % 360);
+
+            # if False:
+            if day_only and self.saa > np.deg2rad(75):
+                print("\tNight time (sun angle = %f), skipping" % self.saa)
+                self.day_time = 0
+                return
+            else:
+                print("\tDay time (sun angle = %f)" % self.saa)
+                self.day_time = 1
+
+            cos_sz = np.cos(self.saa)
+            cos_g = cos_sz * np.cos(self.camera.theta0) + np.sin(self.saa) * np.sin(self.camera.theta0) * np.cos(
+                self.camera.phi0 - self.saz);
+
+            # RuntimeWarnings expected in this block
+            if np.nanmean(red0[(cos_g > 0.995) & (red0 >= 1)]) > 230:
+                mk = cos_g > 0.98
+                red0[mk] = np.nan
 
         # Not used ??
         # xsun = np.tan(self.saa) * np.sin(saz)
@@ -271,134 +272,142 @@ class image:
 
     def compute_cloud_mask(self, img_prev):
 
-        if (self.rgbu is None) or (img_prev.rgbu is None):
-            print("\tCannot compute cloud mask on \"distorted\" images")
-            return
+        try:
+            if (self.rgbu is None) or (img_prev.rgbu is None):
+                print("\tCannot compute cloud mask on \"distorted\" images")
+                return
 
-        if self.bright_mask is None:
-            print("\tCannot compute cloud mask on images where the bright mask has not been defined")
-            return
+            if self.bright_mask is None:
+                print("\tCannot compute cloud mask on images where the bright mask has not been defined")
+                return
 
-        # RGB images
-        rgb_curr = self.rgbu
-        rgb_prev = img_prev.rgbu
+            self.cloud_mask = np.full((1000,1000),dtype=np.uint8,fill_value=0)
 
-        # Remove small bright objects (only in the current image)
-        semi_static = self.bright_mask == 1
-        rgb_curr[semi_static] = 0
+            # RGB images
+            rgb_curr = self.rgbu
+            rgb_prev = img_prev.rgbu
 
-        cos_s = np.cos(self.saa);
-        sin_s = np.sin(self.saa)
-        cos_sp = np.cos(self.saz);
-        sin_sp = np.sin(self.saz)
-        cos_th = self.camera.cos_th;
-        sin_th = np.sqrt(1 - cos_th ** 2)
-        cos_p = self.camera.cos_p;
-        sin_p = self.camera.sin_p
-        # Cosine of the angle between illumination and view directions
-        cos_g = cos_s * cos_th + sin_s * sin_th * (cos_sp * cos_p + sin_sp * sin_p);
+            # Remove small bright objects (only in the current image)
+            semi_static = self.bright_mask > 0
+            rgb_curr[semi_static] = 0
 
-        # Previous image
-        r0 = rgb_prev[..., 0].astype(np.float32);
-        r0[r0 <= 0] = np.nan
-        # Current image (self)
-        r1 = rgb_curr[..., 0].astype(np.float32);
-        r1[r1 <= 0] = np.nan
+            cos_s = np.cos(self.saa);
+            sin_s = np.sin(self.saa)
+            cos_sp = np.cos(self.saz);
+            sin_sp = np.sin(self.saz)
+            cos_th = self.camera.cos_th;
+            sin_th = np.sqrt(1 - cos_th ** 2)
+            cos_p = self.camera.cos_p;
+            sin_p = self.camera.sin_p
+            # Cosine of the angle between illumination and view directions
+            cos_g = cos_s * cos_th + sin_s * sin_th * (cos_sp * cos_p + sin_sp * sin_p);
 
-        rbr_raw = (r1 - rgb_curr[:, :, 2]) / (rgb_curr[:, :, 2] + r1)
-        rbr = rbr_raw.copy();
-        rbr -= st.rolling_mean2(rbr, int(self.camera.nx // 6.666))
+            # Previous image
+            r0 = rgb_prev[..., 0].astype(np.float32);
+            r0[r0 <= 0] = np.nan
+            # Current image (self)
+            r1 = rgb_curr[..., 0].astype(np.float32);
+            r1[r1 <= 0] = np.nan
 
-        rbr[rbr >  0.08] =  0.08;
-        rbr[rbr < -0.08] = -0.08;
+            rbr_raw = (r1 - rgb_curr[:, :, 2]) / (rgb_curr[:, :, 2] + r1)
+            rbr = rbr_raw.copy();
+            rbr -= st.rolling_mean2(rbr, int(self.camera.nx // 6.666))
 
-        # Scale rbr to 0-255
-        rbr = (rbr + 0.08) * 1587.5 + 1;
-        mblue = np.nanmean(rgb_curr[(cos_g < 0.7) & (r1 > 0) & (rbr_raw < -0.01), 2].astype(np.float32));
-        err = r1 - r0;
-        err -= np.nanmean(err)
-        dif = st.rolling_mean2(abs(err), 100)
-        err = st.rolling_mean2(err, 5)
-        dif2 = maximum_filter(np.abs(err), 5)
+            rbr[rbr >  0.08] =  0.08;
+            rbr[rbr < -0.08] = -0.08;
 
-        sky = (rbr < 126) & (dif < 1.2);
-        sky |= dif < 0.9;
-        sky |= (dif < 1.5) & (err < 3) & (rbr < 105)
-        sky |= (rbr < 70);
-        sky &= (self.red > 0);
-        cld = (dif > 2) & (err > 4);
-        cld |= (self.red > 150) & (rbr > 160) & (dif > 3);
-        # Clouds with high rbr
-        cld |= (rbr > 180);
-        cld[cos_g > 0.7] |= (rgb_curr[cos_g > 0.7, 2] < mblue) & (
-                rbr_raw[cos_g > 0.7] > -0.01);  # dark clouds
-        cld &= dif > 3
-        total_pixel = np.sum(r1 > 0)
+            # Scale rbr to 0-255
+            rbr = (rbr + 0.08) * 1587.5 + 1;
+            mblue = np.nanmean(rgb_curr[(cos_g < 0.7) & (r1 > 0) & (rbr_raw < -0.01), 2].astype(np.float32));
+            err = r1 - r0;
+            err -= np.nanmean(err)
+            dif = st.rolling_mean2(abs(err), 100)
+            err = st.rolling_mean2(err, 5)
+            dif2 = maximum_filter(np.abs(err), 5)
 
-        min_size = 50 * self.camera.nx / 1000
-        cld = remove_small_objects(cld, min_size=min_size, connectivity=4, in_place=True)
-        sky = remove_small_objects(sky, min_size=min_size, connectivity=4, in_place=True)
+            sky = (rbr < 126) & (dif < 1.2);
+            sky |= dif < 0.9;
+            sky |= (dif < 1.5) & (err < 3) & (rbr < 105)
+            sky |= (rbr < 70);
+            sky &= (self.red > 0);
+            cld = (dif > 2) & (err > 4);
+            cld |= (self.red > 150) & (rbr > 160) & (dif > 3);
+            # Clouds with high rbr
+            cld |= (rbr > 180);
+            cld[cos_g > 0.7] |= (rgb_curr[cos_g > 0.7, 2] < mblue) & (
+                    rbr_raw[cos_g > 0.7] > -0.01);  # dark clouds
+            cld &= dif > 3
+            total_pixel = np.sum(r1 > 0)
 
-        ncld = np.sum(cld);
-        nsky = np.sum(sky)
+            min_size = 50 * self.camera.nx / 1000
+            cld = remove_small_objects(cld, min_size=min_size, connectivity=4, in_place=True)
+            sky = remove_small_objects(sky, min_size=min_size, connectivity=4, in_place=True)
 
-        # These thresholds don't strictly need to match those used in forecasting / training
-        if (ncld + nsky) <= 1e-2 * total_pixel:
-            print("\tNo clouds")
-            return;
-        # Shortcut for clear or totally overcast conditions
-        elif (ncld < nsky) and (ncld <= 5e-2 * total_pixel):
-            self.cloud_mask = cld.astype(np.uint8)
-            # self.layers = 1
-            return
-        elif (ncld > nsky) and (nsky <= 5e-2 * total_pixel):
-            self.cloud_mask = ((~sky) & (r1 > 0)).astype(np.uint8)
-            # self.layers = 1
-            return
+            ncld = np.sum(cld);
+            nsky = np.sum(sky)
 
-        max_score = -np.Inf
-        x0 = -0.15;
-        ncld = 0.25 * nsky + 0.75 * ncld
-        nsky = 0.25 * ncld + 0.75 * nsky
+            # These thresholds don't strictly need to match those used in forecasting / training
+            if (ncld + nsky) <= 1e-2 * total_pixel:
+                print("\tNo clouds")
+                return;
+            # Shortcut for clear or totally overcast conditions
+            elif (ncld < nsky) and (ncld <= 5e-2 * total_pixel):
+                self.cloud_mask = cld.astype(np.uint8)
+                print(self.filename + ": clear")
+                # self.layers = 1
+                return
+            #elif (ncld > nsky) and (nsky <= 5e-2 * total_pixel):
+            #    self.cloud_mask = ((~sky) & (r1 > 0)).astype(np.uint8)
+            #    print(self.filename + ": overcast")
+            #    # self.layers = 1
+            #    return
 
-        # The logic of the following loop is questionable. The cloud_mask can be defined and overwritten
-        # at each iteration or "not at all" if the last condition "score > max_score" is never satisfied
-        for slp in [0.1, 0.15]:
-            offset = np.zeros_like(r1);
-            mk = cos_g < x0;
-            offset[mk] = (x0 - cos_g[mk]) * 0.05;
-            mk = (cos_g >= x0) & (cos_g < 0.72);
-            offset[mk] = (cos_g[mk] - x0) * slp
-            mk = (cos_g >= 0.72);
-            offset[mk] = slp * (0.72 - x0) + (cos_g[mk] - 0.72) * slp / 3;
-            rbr2 = rbr_raw - offset;
-            minr, maxr = st.lower_upper(rbr2[rbr2 > -1], 0.01)
-            rbr2 -= minr;
-            rbr2 /= (maxr - minr);
+            max_score = -np.Inf
+            x0 = -0.15;
+            ncld = 0.25 * nsky + 0.75 * ncld
+            nsky = 0.25 * ncld + 0.75 * nsky
 
-            lower, upper, step = -0.1, 1.11, 0.2
-            max_score_local = -np.Inf
+            # The logic of the following loop is questionable. The cloud_mask can be defined and overwritten
+            # at each iteration or "not at all" if the last condition "score > max_score" is never satisfied
+            for slp in [0.1, 0.15]:
+                offset = np.zeros_like(r1);
+                mk = cos_g < x0;
+                offset[mk] = (x0 - cos_g[mk]) * 0.05;
+                mk = (cos_g >= x0) & (cos_g < 0.72);
+                offset[mk] = (cos_g[mk] - x0) * slp
+                mk = (cos_g >= 0.72);
+                offset[mk] = slp * (0.72 - x0) + (cos_g[mk] - 0.72) * slp / 3;
+                rbr2 = rbr_raw - offset;
+                minr, maxr = st.lower_upper(rbr2[rbr2 > -1], 0.01)
+                rbr2 -= minr;
+                rbr2 /= (maxr - minr);
 
-            for iter in range(3):
-                for thresh in np.arange(lower, upper, step):
-                    mk_cld = (rbr2 > thresh)  # & (dif>1) & (rbr>70)
-                    mk_sky = (rbr2 <= thresh) & (r1 > 0)
-                    bnd = st.get_border(mk_cld, 10, thresh=0.2, ignore=self.red <= 0)
+                lower, upper, step = -0.1, 1.11, 0.2
+                max_score_local = -np.Inf
 
-                    sc = [np.sum(mk_cld & cld) / ncld, np.sum(mk_sky & sky) / nsky, np.sum(dif2[bnd] > 4) / np.sum(bnd), \
-                          -5 * np.sum(mk_cld & sky) / nsky, -5 * np.sum(mk_sky & cld) / ncld,
-                          -5 * np.sum(dif2[bnd] < 2) / np.sum(bnd)]
-                    score = np.nansum(sc)
-                    if score > max_score_local:
-                        max_score_local = score
-                        thresh_ref = thresh
-                        if score > max_score:
-                            max_score = score
-                            # Set the cloud mask
-                            self.cloud_mask = mk_cld.astype(np.uint8);
+                for iter in range(3):
+                    for thresh in np.arange(lower, upper, step):
+                        mk_cld = (rbr2 > thresh)  # & (dif>1) & (rbr>70)
+                        mk_sky = (rbr2 <= thresh) & (r1 > 0)
+                        bnd = st.get_border(mk_cld, 10, thresh=0.2, ignore=self.red <= 0)
 
-                lower, upper = thresh_ref - 0.5 * step, thresh_ref + 0.5 * step + 0.001
-                step /= 4;
+                        sc = [np.sum(mk_cld & cld) / ncld, np.sum(mk_sky & sky) / nsky, np.sum(dif2[bnd] > 4) / np.sum(bnd), \
+                            -5 * np.sum(mk_cld & sky) / nsky, -5 * np.sum(mk_sky & cld) / ncld,
+                            -5 * np.sum(dif2[bnd] < 2) / np.sum(bnd)]
+                        score = np.nansum(sc)
+                        if score > max_score_local:
+                            max_score_local = score
+                            thresh_ref = thresh
+                            if score > max_score:
+                                max_score = score
+                                # Set the cloud mask
+                                self.cloud_mask = mk_cld.astype(np.uint8);
+                                print(self.filename + ": clouds! " + str(iter) + "," + str(thresh))
+
+                    lower, upper = thresh_ref - 0.5 * step, thresh_ref + 0.5 * step + 0.001
+                    step /= 4;
+        except Exception as e:
+            print("Error creating cloud mask: " + str(e))
 
     """
         Computes the cloud motion 
@@ -668,7 +677,7 @@ def process_bright_mask(args):
 
         if not hasvar:
             print("\tWriting BrightMask")
-            bmsk = root_grp.createVariable('BrightMask', img_curr.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9)
+            bmsk = root_grp.createVariable('BrightMask', img_curr.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
             bmsk.description = "Mask of small bright objects"
             bmsk[:, :] = img_curr.bright_mask
         else:
@@ -724,7 +733,7 @@ def process_cloud_mask(args):
 
         if not hasvar:
             print("\tWriting cloud mask")
-            cm = root_grp.createVariable('CloudMask', img_curr.cloud_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9)
+            cm = root_grp.createVariable('CloudMask', img_curr.cloud_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
             cm.description = "Cloud mask"
             cm[:, :] = img_curr.cloud_mask
         else:
