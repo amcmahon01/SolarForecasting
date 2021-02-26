@@ -152,7 +152,7 @@ class camera:
             except FileNotFoundError:
                 print("Warning: No static mask found, cannot be applied")
             except Exception as e:
-                print("WError loading static mask, cannot be applied: %s" % str(e))
+                print("Error loading static mask, cannot be applied: %s" % str(e))
 
         self.weights = st.prepare_bin_average2(x, y, xbin, ybin);
 
