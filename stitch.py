@@ -1,5 +1,7 @@
 from datetime import datetime
 import image
+import matplotlib
+matplotlib.use('agg')
 from matplotlib import pyplot as plt
 import netCDF4 as nc4
 import numpy as np

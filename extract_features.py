@@ -1,7 +1,6 @@
 import numpy as np
 import os, sys, glob
 import matplotlib
-
 matplotlib.use('agg')
 from matplotlib import pyplot as plt
 import pickle
@@ -70,7 +69,7 @@ def extract_MP(args):
     max_ghis = list(loc.get_clearsky(times)['ghi'])
     max_dnis = list(loc.get_clearsky(times)['dni'])
     max_dhis = list(loc.get_clearsky(times)['dhi'])
-    cf_total = np.sum(stch.cloud_mask) / np.sum(rgb[:, 0] > 0)
+    cf_total = np.sum(stch.cloud_mask[:]) / np.sum(rgb[:, 0] > 0)
 
     out_args = []
     for ilt, lead_time in enumerate(lead_steps):
@@ -177,7 +176,8 @@ if __name__ == "__main__":
     if cores_to_use > 1:
         pool = multiprocessing.Pool(cores_to_use, maxtasksperchild=128)
 
-    header_txt = "lead_minutes,timestamp,stch.height,stch.saa,cf1,R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,cf2,R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,cf_total,max_ghi,max_dni,max_dhi"
+    header_txt = b"lead_minutes,timestamp,stch.height,stch.saa,cf1,R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,cf2,R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,cf_total,max_ghi,max_dni,max_dhi\n"
+    
 
     print("DAYS: %s" % days)
 
@@ -188,13 +188,14 @@ if __name__ == "__main__":
             try:
                 print("Creating directory " + dir)
                 os.mkdir(dir)
-            except OSError:
-                print("Cannot create directory " + dir)
+            except OSError as e:
+                print("Error creating directory " + dir + ": " + str(e))
                 continue
 
         fhs = []
         for iGHI in range(len(GHI_loc)):
             fhs += [open(outpath + day[:8] + '/GHI' + format(iGHI, '02') + '.csv', 'wb')]
+            fhs[iGHI].write(header_txt)
 
         print("Extracting features for %s, GHI sensors:" % day)
         for ff in fhs:
@@ -211,8 +212,10 @@ if __name__ == "__main__":
             stch = stitch.restore_ncdf(f)
 
             if stch is None:
+                print("No stitched image, skipping.")
                 continue
             if stch.cloud_mask is None:
+                print("No cloud mask, skipping.")
                 continue
 
             timestamp = utils.localToUTC(datetime.strptime(f[-17:-3], '%Y%m%d%H%M%S'), cam_tz)
@@ -258,7 +261,7 @@ if __name__ == "__main__":
                 for idx, args in enumerate(iGHI):
                     idx_GHI = args[2]
 
-                    np.savetxt(fhs[idx_GHI], *args[3:], header=header_txt)
+                    np.savetxt(fhs[idx_GHI], *args[3:])
                     forecast_stats[idx_GHI, idx] += 1
 
                     if SAVE_FIG:
@@ -281,11 +284,12 @@ if __name__ == "__main__":
                 # plt.show()
                 plt.close()
 
+        for fh in fhs:
+            fh.close()                
+
     if cores_to_use > 1:
         pool.close()
         pool.join()
 
-    for fh in fhs:
-        fh.close()
 
     np.savetxt(outpath + day[:8] + '/forecast_stats.csv', forecast_stats, fmt="%i", delimiter=',')

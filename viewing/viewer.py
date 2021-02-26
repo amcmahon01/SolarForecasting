@@ -29,6 +29,7 @@ class FileWidget(QWidget):
 
         self.fileModel = QFileSystemModel()
         self.fileModel.setFilter(QDir.NoDotAndDotDot |  QDir.Files)
+        self.fileModel.setNameFilters(["*.nc"])
 
         self.treeview.setModel(self.dirModel)
         self.listview.setModel(self.fileModel)
@@ -77,67 +78,71 @@ class Viewer(QMainWindow):
         self.resize(1200,800)
         self.setWindowTitle('Nowcasting netCDF Viewer')
 
-        d1 = Dock("Files", size=(300, 600))     ## give this dock the minimum possible size
-        d2 = Dock("Console", size=(600,50))
-        d3 = Dock("Variables", size=(300,600))
-        d4 = Dock("RGB Undistorted Image", size=(600,600))
-        d5 = Dock("Red Mask ", size=(600,600))
-        d6 = Dock("Bright Mask", size=(600,600))
-        d7 = Dock("Cloud Mask", size=(600,600))
-        area.addDock(d1, 'left')
-        area.addDock(d2, 'bottom', d1)
-        area.addDock(d3, 'bottom', d1)
-        area.addDock(d4, 'right')
-        area.addDock(d5, 'bottom', d4)
-        area.addDock(d6, 'right', d4)
-        area.addDock(d7, 'right', d5)
+        #shared panels
+        self.d1 = Dock("Files", size=(300, 600))     ## give this dock the minimum possible size
+        self.d2 = Dock("Console", size=(600,50))
+        self.d3 = Dock("Variables", size=(300,600))
+
+        #mask panels
+        self.d4 = Dock("RGB Undistorted Image", size=(600,600))
+        self.d5 = Dock("Red Mask ", size=(600,600))
+        self.d6 = Dock("Bright Mask", size=(600,600))
+        self.d7 = Dock("Cloud Mask", size=(600,600))
+
+        area.addDock(self.d1, 'left')
+        area.addDock(self.d2, 'bottom', self.d1)
+        area.addDock(self.d3, 'bottom', self.d1)
+        area.addDock(self.d4, 'right')
+        area.addDock(self.d5, 'bottom', self.d4)
+        area.addDock(self.d6, 'right', self.d4)
+        area.addDock(self.d7, 'right', self.d5)
 
         ## first dock gets save/restore buttons
         w1 = FileWidget()
         w1.setCallback(self.loadNC)
-        d1.addWidget(w1)
+        self.d1.addWidget(w1)
 
         self.con = pg.console.ConsoleWidget()
         self.con.catchAllExceptions(True)
         self.con.ui.exceptionGroup.setVisible(False)
         sys.stdout = self.con
         sys.stderr = self.con
-        d2.addWidget(self.con)
+        self.d2.addWidget(self.con)
 
         d = {}
 
         w3 = pg.DataTreeWidget(data=d)
         w3.setWindowTitle("Variables")
-        d3.addWidget(w3)
+        self.d3.addWidget(w3)
 
         w4 = pg.ImageView()
         #w4.setImage(np.random.normal(size=(100,100)))
         #vbox = w4.getView()
         #vbox.addItem(pg.LabelItem("RGB Undistorted"))
-        d4.addWidget(w4)
+        self.d4.addWidget(w4)
 
         w5 = pg.ImageView()
         #w5.setImage(np.random.normal(size=(100,100)))
         #vbox = w5.getView()
         #vbox.addItem(pg.LabelItem("Red Mask"))
-        d5.addWidget(w5)
+        self.d5.addWidget(w5)
 
         w6 = pg.ImageView()
         #w6.setImage(np.random.normal(size=(100,100)))
         #vbox = w6.getView()
         #vbox.addItem(pg.LabelItem("Bright Mask"))
-        d6.addWidget(w6)
+        self.d6.addWidget(w6)
 
         w7 = pg.ImageView()
         #w7.setImage(np.random.normal(size=(100,100)))
         #vbox = w7.getView()
         #vbox.addItem(pg.LabelItem("Cloud Mask"))
-        d7.addWidget(w7)
+        self.d7.addWidget(w7)
 
         self.show()
         print("Ready!")
 
-        w = {"vars": w3,"w_rgbu":w4,"w_red":w5,"w_br_mask":w6,"w_cl_mask":w7}
+        w = {"vars":w3,"w_rgbu":w4,"w_red":w5,"w_br_mask":w6,"w_cl_mask":w7}
         return w
 
     def loadNC(self, f):
@@ -155,11 +160,13 @@ class Viewer(QMainWindow):
                 d_out.update({k: v[:]})
 
         self.widgets["vars"].setData(d_out)
-        self.widgets["w_rgbu"].setImage(d_vars["RGBu"][:])
-        self.widgets["w_red"].setImage(d_vars["Red"][:])
-        self.widgets["w_br_mask"].setImage(d_vars["BrightMask"][:])
-        self.widgets["w_cl_mask"].setImage(d_vars["CloudMask"][:])
 
+        nc_var_wids = {"RGBu":"w_rgbu","RGB":"w_rgbu","Red":"w_red","BrightMask":"w_br_mask","CloudMask":"w_cl_mask"}
+        for v,w in nc_var_wids.items():
+            try:
+                self.widgets[w].setImage(d_vars[v][:])
+            except KeyError:
+                pass
 
 if __name__ == '__main__':
     app = QtGui.QApplication([])
