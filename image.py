@@ -10,6 +10,8 @@ from scipy.ndimage.filters import maximum_filter
 import mncc
 import geo
 import pickle
+import matplotlib
+matplotlib.use('agg')
 from matplotlib import pyplot
 import utils
 import netCDF4 as nc4

@@ -109,7 +109,7 @@ if __name__ == "__main__":
                                        max_theta=70, \
                                        nxy=1000, \
                                        timezone=cam_tz, \
-                                       path=static_mask_path)
+                                       fpath=static_mask_path)
 
     #############################################################################
 

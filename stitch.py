@@ -1,5 +1,4 @@
 from datetime import datetime
-import image
 import matplotlib
 matplotlib.use('agg')
 from matplotlib import pyplot as plt
@@ -8,6 +7,7 @@ import numpy as np
 import os
 import pickle
 import warnings
+import image
 
 class stitch:
     def __init__(self, time):
