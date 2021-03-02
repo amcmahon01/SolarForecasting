@@ -177,7 +177,7 @@ if __name__ == "__main__":
         pool = multiprocessing.Pool(cores_to_use, maxtasksperchild=128)
 
     header_txt = b"lead_minutes,timestamp,stch.height,stch.saa,cf1,R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,cf2,R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,cf_total,max_ghi,max_dni,max_dhi\n"
-    
+    forecast_stats_total = np.zeros((len(GHI_loc), len(lead_minutes)))
 
     print("DAYS: %s" % days)
 
@@ -285,11 +285,13 @@ if __name__ == "__main__":
                 plt.close()
 
         for fh in fhs:
-            fh.close()                
+            fh.close()
+
+        forecast_stats_total += forecast_stats
+        np.savetxt(outpath + day[:8] + '/forecast_stats.csv', forecast_stats, fmt="%i", delimiter=',')
 
     if cores_to_use > 1:
         pool.close()
         pool.join()
-
-
-    np.savetxt(outpath + day[:8] + '/forecast_stats.csv', forecast_stats, fmt="%i", delimiter=',')
+    
+    np.savetxt(outpath + 'forecast_stats_run_' + day[:8] + '.csv', forecast_stats_total, fmt="%i", delimiter=',')
