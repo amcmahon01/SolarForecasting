@@ -5,6 +5,7 @@ matplotlib.use('agg')
 from matplotlib import pyplot as plt
 import pickle
 import multiprocessing
+from multiprocessing import get_context
 from datetime import datetime, timedelta
 from configparser import ConfigParser
 from ast import literal_eval
@@ -28,7 +29,7 @@ REPROCESS = False  # Not yet implemented
 def extract_MP(args):
     # TODO lead_steps should be input of the function
 
-    iGHI, iy0, ix0, ny, nx, stch, timestamp, outpath, latlon = args
+    iGHI, iy0, ix0, ny, nx, stch, timestamp, outpath, latlon, lead_minutes, lead_steps = args
 
     if (iy0 < 0) or (ix0 < 0):
         print("\tInvalid dimensions")
@@ -174,7 +175,7 @@ if __name__ == "__main__":
     print("Number of cores to use: %s" % cores_to_use)
 
     if cores_to_use > 1:
-        pool = multiprocessing.Pool(cores_to_use, maxtasksperchild=128)
+        pool = get_context("spawn").Pool(cores_to_use, maxtasksperchild=128)
 
     header_txt = b"lead_minutes,timestamp,stch.height,stch.saa,cf1,R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,cf2,R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,cf_total,max_ghi,max_dni,max_dhi\n"
     forecast_stats_total = np.zeros((len(GHI_loc), len(lead_minutes)))
@@ -230,7 +231,7 @@ if __name__ == "__main__":
             ixs = (0.5 + (x - stch.cloud_base_height * np.tan(stch.saa) * np.sin(stch.saz)) / stch.pixel_size).astype(
                 np.int32)
 
-            args = [[iGHI, iys[iGHI], ixs[iGHI], ny, nx, stch, timestamp, outpath + day[:8], GHI_loc[iGHI]] for iGHI in
+            args = [[iGHI, iys[iGHI], ixs[iGHI], ny, nx, stch, timestamp, outpath + day[:8], GHI_loc[iGHI], lead_minutes, lead_steps] for iGHI in
                     range(len(GHI_loc))]
 
             # Extract features (list of lists)

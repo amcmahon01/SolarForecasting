@@ -2,8 +2,8 @@ import glob, os, sys
 from configparser import ConfigParser
 from ast import literal_eval
 from pytz import timezone
-import camera
 import stitch
+import camera
 import multiprocessing
 
 #############################################################################
