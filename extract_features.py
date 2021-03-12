@@ -75,7 +75,7 @@ def extract_MP(args):
     out_args = []
     for ilt, lead_time in enumerate(lead_steps):
         iy = int(0.5 + iy0 + stch.velocity[0] * lead_time)
-        ix = int(0.5 + ix0 - stch.velocity[0] * lead_time)  #####need to revert vx since the image is flipped
+        ix = int(0.5 + ix0 - stch.velocity[1] * lead_time)  #####  ? need to revert vx since the image is flipped
         slc = np.s_[max(0, iy - WIN_SIZE):min(ny - 1, iy + WIN_SIZE),
               max(0, ix - WIN_SIZE):min(nx - 1, ix + WIN_SIZE)]
         if stch.cloud_mask[slc].size >= 1:
@@ -257,6 +257,7 @@ if __name__ == "__main__":
                 ax[0].imshow(stch.rgb);
                 ax[1].imshow(stch.cloud_mask);
                 colors = matplotlib.cm.rainbow(np.linspace(1, 0, len(lead_minutes)))
+                plt.quiver([0, 0, 0], [0, 0, 0], [1, -2, 4], [1, 2, -7], angles='xy', scale_units='xy', scale=1)
 
             for iGHI in features:
                 for idx, args in enumerate(iGHI):
