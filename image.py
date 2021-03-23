@@ -7,11 +7,11 @@ import os, ephem
 from skimage.morphology import remove_small_objects
 from scipy.ndimage import morphology
 from scipy.ndimage.filters import maximum_filter
+import matplotlib
+matplotlib.use('agg')
 import mncc
 import geo
 import pickle
-import matplotlib
-matplotlib.use('agg')
 from matplotlib import pyplot
 import utils
 import netCDF4 as nc4
