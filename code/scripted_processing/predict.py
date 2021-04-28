@@ -101,7 +101,7 @@ for day in days:
             DataY[sensor] = []
             
             try:
-                x = np.genfromtxt(inpath+day[:8]+'/GHI'+str(sensor)+'.csv',delimiter=',');  # < ORIGINAL
+                x = np.genfromtxt(inpath+day[:8]+'/GHI'+str(sensor)+'.csv',delimiter=',',skip_header=1);  # < ORIGINAL
                 #x = np.genfromtxt(inpath+'/GHI'+str(sensor)+'.csv',delimiter=',');         # Temp change to allow running of old data in dhuang3
                 
                 x = x[x[:,0]==forward];                                 #Take all rows where forecast period == forward

@@ -44,10 +44,14 @@ def extract_MP(args):
         cf1 = np.sum(img.cm[slc]) / np.sum(rgb[:,0]>0);
         
         dt_timestamp = dt.datetime.fromtimestamp( timestamp,tz=pytz.timezone("UTC") )
-        times = pd.DatetimeIndex([dt_timestamp + timedelta(minutes=lm+60) for lm in lead_minutes])
+        times = pd.DatetimeIndex([dt_timestamp + timedelta(minutes=lm) for lm in lead_minutes])
         #print( times )
-        ghis = loc.get_clearsky( times )
+        #unused: ghis = loc.get_clearsky( times )
+        #Note: calculated values below are for the forecast time, not the current feature time
         max_ghis = list(loc.get_clearsky(times)['ghi'])
+        max_dnis = list(loc.get_clearsky(times)['dni'])
+        max_dhis = list(loc.get_clearsky(times)['dhi'])
+        cf_total = np.sum(img.cm) / np.sum(rgb[:,0]>0)
 
         out_args = []
         for ilt, lead_time in enumerate(lead_steps):
@@ -68,9 +72,9 @@ def extract_MP(args):
                 tmp = np.asarray([lead_minutes[ilt],timestamp,img.height,img.sz,
                         cf1, R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,
                         cf2, R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,
-                        max_ghis[ilt]],dtype=np.float64) 
+                        cf_total, max_ghis[ilt],max_dnis[ilt],max_dhis[ilt]],dtype=np.float64) 
                 tmp=np.reshape(tmp,(1,-1));
-                
+
                 #print("\t\tTimestamp: %li \tiGHI: %i \tlead_time: %i \tlead_minutes: %i, win: %s" % (timestamp, iGHI, lead_time, lead_minutes[ilt], str([max(0,iy-WIN_SIZE), min(ny-1,iy+WIN_SIZE), max(0,ix-WIN_SIZE), min(nx-1,ix+WIN_SIZE)])))
                 plt_data = (ix, iy)
                 plt0_data = (ix0, iy0)
@@ -127,7 +131,7 @@ if __name__ == "__main__":
 
     #print(GHI_loc, len(GHI_loc))
 
-                     
+    header_txt = "lead_minutes,timestamp,img.height,img.sz,cf1,R_mean1,G_mean1,B_mean1,R_min1,G_min1,B_min1,R_max1,G_max1,B_max1,RBR1,cf2,R_mean2,G_mean2,B_mean2,R_min2,G_min2,B_min2,R_max2,G_max2,B_max2,RBR2,cf_total,max_ghi,max_dni,max_dhi"
 
     for day in days:
         if not os.path.isdir(outpath+day[:8]):
@@ -186,7 +190,7 @@ if __name__ == "__main__":
                                 ax[0].scatter(ix,iy,s=6,marker='x',c='black',edgecolors='face');
                                 ax[0].text(ix+25, iy, str(idx_GHI), color='darkgray', fontsize='x-small')
                             
-                            np.savetxt(fhs[idx_GHI], *args[3:])
+                            np.savetxt(fhs[idx_GHI], *args[3:], header=header_txt)
                             forecast_stats[idx_GHI,idx] += 1
                             ix, iy = args[1]
                             ax[0].scatter(ix,iy,s=6,marker='o',c=colors[idx],edgecolors='face');
