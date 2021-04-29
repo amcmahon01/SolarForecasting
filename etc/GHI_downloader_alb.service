@@ -1,0 +1,14 @@
+[Unit]
+Description=Start Solar Nowcasting GHI collection for Albany
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=nowcast
+ExecStart=/home/nowcast/run/GHI_downloader_alb.sh
+
+[Install]
+WantedBy=multi-user.target
