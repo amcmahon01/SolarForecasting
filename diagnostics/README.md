@@ -1,4 +1,4 @@
-# Diagnostice Plots #
+# Diagnostic Plots #
 
 Miscellaneous collection of diagnostic plots.
 
