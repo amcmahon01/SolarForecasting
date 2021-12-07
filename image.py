@@ -1,3 +1,4 @@
+from typing import Tuple
 import numpy as np
 import warnings
 import stat_tools as st
@@ -15,6 +16,7 @@ import pickle
 from matplotlib import pyplot
 import utils
 import netCDF4 as nc4
+import logging
 
 
 # The image class
@@ -62,17 +64,17 @@ class image:
     def read_image(self):
 
         try:
-            print("\tReading image file " + self.filename)
+            logging.info("\tReading image file " + self.filename)
             im0 = pyplot.imread(self.filename)
         except:
-            print('\tCannot read file')
+            logging.error('\tCannot read file ' + self.filename)
             return
 
         # Select region of interest
         try:
             self.rgb = im0[self.camera.roi]
         except:
-            print('\tCannot select region of interest')
+            logging.warning('\tCannot select region of interest')
             return
 
     """
@@ -82,22 +84,27 @@ class image:
     # https://docs.python.org/2.0/lib/module-pickle.html
     def save_pickle(self, filename):
 
-        print("\tSaving image file " + filename)
+        logging.info("\tSaving image file " + filename)
         try:
             with open(filename, 'wb') as output:  # Overwrites any existing file.
                 pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
         except:
-            print("\tCannot save the file")
+            logging.error("\tCannot save the file " + filename)
 
     """
         Save the attributes of the image object in a NetCDF file
     """
 
-    def save_netcdf(self, filename):
+    def save_netcdf(self, filename, inmemory=False):
 
-        print("\tSaving image file " + filename)
         try:
-            root_grp = nc4.Dataset(filename, 'w', format='NETCDF4')  # 'w' stands for write
+            if inmemory:
+                logging.info("\tSaving in mem: " + filename)
+                memory = 1024
+            else:
+                logging.info("\tSaving image file " + filename)
+                memory = None
+            root_grp = nc4.Dataset(filename, mode='w',memory=memory)  # 'w' stands for write, memory size doesnt't matter using netcdf v4
             root_grp.description = 'SolarForecasting image object representation'
             root_grp.file_source = self.filename  # os.path.basename(self.filename)
             root_grp.history = "Created on " + datetime.utcnow().strftime("%b-%d-%Y %H:%M:%S")
@@ -130,9 +137,9 @@ class image:
                 rgbu.description = "Undistorted RGB channels"
                 rgbu[:, :, :] = self.rgbu
             if self.bright_mask is not None:
-                bmsk = root_grp.createVariable('BrightMask', self.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9)
+                bmsk = root_grp.createVariable('BrightMask', self.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
                 bmsk.description = "Mask of small bright objects"
-                bmsk[:, :, :] = self.bright_mask
+                bmsk[:, :] = self.bright_mask
             if self.red is not None:
                 redu = root_grp.createVariable('Red', self.red.dtype.str, ('x', 'y'), zlib=True, complevel=9)
                 redu.description = "Spatial texture of the red channel, used to determine cloud motion and cloud base height"
@@ -158,9 +165,13 @@ class image:
                 height.units = "m"
                 height[:] = hgt
 
-            root_grp.close()
-        except:
-            print("\tAn error occurred creating the NetCDF file " + filename)
+            if inmemory:
+                data = root_grp.close()
+                return data.tobytes()
+            else:
+                return root_grp.close()
+        except Exception as e:
+            logging.error("\tAn error occurred creating the NetCDF file " + filename + ": " + str(e))
 
     """
         Undistort the raw image, set RGBu and red
@@ -169,7 +180,7 @@ class image:
     def undistort_image(self, day_only=True, skip_sun=False):
 
         if self.rgb is None:
-            print("\tCannot undistort the image if the RGB channel is not defined")
+            logging.warning("\tCannot undistort the image if the RGB channel is not defined")
             return
 
         red0 = self.rgb[:, :, 0].astype(np.float32);
@@ -179,7 +190,7 @@ class image:
             # Get the image acquisition time, this need to be adjusted whenever the naming convention changes
             t_std = utils.localToUTC(datetime.strptime(self.filename[-18:-4], '%Y%m%d%H%M%S'), self.camera.timezone)
 
-            print("\tUndistortion %s" % (str(t_std)))
+            logging.info("\tUndistortion %s" % (str(t_std)))
             gatech = ephem.Observer();
             gatech.date = t_std.strftime('%Y/%m/%d %H:%M:%S')
             gatech.lat = str(self.camera.lat)
@@ -193,11 +204,11 @@ class image:
 
             # if False:
             if day_only and self.saa > np.deg2rad(75):
-                print("\tNight time (sun angle = %f), skipping" % self.saa)
+                logging.info("\tNight time (sun angle = %f), skipping" % self.saa)
                 self.day_time = 0
                 return
             else:
-                print("\tDay time (sun angle = %f)" % self.saa)
+                logging.info("\tDay time (sun angle = %f)" % self.saa)
                 self.day_time = 1
 
             cos_sz = np.cos(self.saa)
@@ -242,6 +253,7 @@ class image:
         im[self.red <= 0] = 0
 
         self.rgbu = im
+        return
 
     """
       Computes the bright mask to filter out small bright objects      
@@ -250,7 +262,7 @@ class image:
     def compute_bright_mask(self, img_prev):
 
         if (self.red is None) or (img_prev.red is None):
-            print("\tCannot remove small objects on \"distorted\" images")
+            logging.warning("\tCannot remove small objects on \"distorted\" images")
             return
 
         r0 = img_prev.red.astype(np.float32)
@@ -267,6 +279,7 @@ class image:
         semi_static = remove_small_objects(semi_static, min_size=200, in_place=True)
 
         self.bright_mask = semi_static.astype(np.uint8)
+        return
 
     """
       Computes the cloud mask
@@ -276,11 +289,11 @@ class image:
 
         try:
             if (self.rgbu is None) or (img_prev.rgbu is None):
-                print("\tCannot compute cloud mask on \"distorted\" images")
+                logging.warning("\tCannot compute cloud mask on \"distorted\" images")
                 return
 
             if self.bright_mask is None:
-                print("\tCannot compute cloud mask on images where the bright mask has not been defined")
+                logging.warning("\tCannot compute cloud mask on images where the bright mask has not been defined")
                 return
 
             self.cloud_mask = np.full((1000,1000),dtype=np.uint8,fill_value=0)
@@ -350,17 +363,17 @@ class image:
 
             # These thresholds don't strictly need to match those used in forecasting / training
             if (ncld + nsky) <= 1e-2 * total_pixel:
-                print("\tNo clouds")
+                logging.info("\tNo clouds")
                 return;
             # Shortcut for clear or totally overcast conditions
             elif (ncld < nsky) and (ncld <= 5e-2 * total_pixel):
                 self.cloud_mask = cld.astype(np.uint8)
-                print(self.filename + ": clear")
+                logging.info(self.filename + ": clear")
                 # self.layers = 1
                 return
             #elif (ncld > nsky) and (nsky <= 5e-2 * total_pixel):
             #    self.cloud_mask = ((~sky) & (r1 > 0)).astype(np.uint8)
-            #    print(self.filename + ": overcast")
+            #    logging.info(self.filename + ": overcast")
             #    # self.layers = 1
             #    return
 
@@ -404,13 +417,15 @@ class image:
                                 max_score = score
                                 # Set the cloud mask
                                 self.cloud_mask = mk_cld.astype(np.uint8);
-                                print(self.filename + ": clouds! " + str(iter) + "," + str(thresh))
+                                logging.info(self.filename + ": clouds! " + str(iter) + "," + str(thresh))
 
                     lower, upper = thresh_ref - 0.5 * step, thresh_ref + 0.5 * step + 0.001
                     step /= 4;
         except Exception as e:
-            print("Error creating cloud mask: " + str(e))
-
+            raise e
+            logging.error("Error creating cloud mask: " + str(e))
+        return
+        
     """
         Computes the cloud motion 
     """
@@ -418,16 +433,16 @@ class image:
     def compute_cloud_motion(self, img_prev, ratio=0.7, threads=1):
 
         if (self.cloud_mask is None):
-            print("\tCannot compute cloud motion on images where the cloud mask has not been defined")
+            logging.warning("\tCannot compute cloud motion on images where the cloud mask has not been defined")
             return
 
         if (self.bright_mask is None):
-            print("\tCannot compute cloud motion on images where the bright mask has not been defined")
+            logging.warning("\tCannot compute cloud motion on images where the bright mask has not been defined")
             return
 
         # Return if there are no clouds
         if np.sum(self.cloud_mask > 0) < (2e-2 * self.camera.nx * self.camera.ny):
-            print("\tCloud free case")
+            logging.info("\tCloud free case")
             return
 
         r0 = img_prev.red.astype(np.float32)
@@ -448,7 +463,7 @@ class image:
             corr = mncc.mncc(r0, r1, mask1=mask0, mask2=mask1, ratio_thresh=ratio, threads=threads)
 
             if np.count_nonzero(~np.isnan(corr)) == 0:
-                print("\tNaN slice encountered")
+                logging.warning("\tNaN slice encountered")
                 return
 
             max_idx = np.nanargmax(corr)
@@ -456,11 +471,13 @@ class image:
             vx = max_idx % len(corr)  - nx + 1
 
             if np.isnan(vy):
-                print("\tThe cloud motion velocity is NaN")
+                logging.warning("\tThe cloud motion velocity is NaN")
             else:
                 self.velocity += [[vy, vx]]
         except:
-            print("\tAn error occurred computing the cloud motion")
+            logging.error("\tAn error occurred computing the cloud motion")
+            
+        return
 
     """
         Computes the cloud base height for each cloud layer
@@ -469,11 +486,11 @@ class image:
     def compute_cloud_height(self, img_neig, layer=0, distance=None):
 
         if (self.cloud_mask is None):
-            print("\tCannot compute cloud base height on images where the cloud mask has not been defined")
+            logging.warning("\tCannot compute cloud base height on images where the cloud mask has not been defined")
             return
 
         if (self.camera.max_theta != img_neig.camera.max_theta):
-            print("\tThe max_theta of the two cameras is different");
+            logging.warning("\tThe max_theta of the two cameras is different");
             return
 
         if distance is None:
@@ -514,13 +531,13 @@ class image:
                         self.cloud_base_height += [int(res)]
                         self.height_neighbours += [img_neig.camera.camID]
                 else:
-                    print("\tLow score")
+                    logging.info("\tLow score")
             else:
-                print("\tNot enough valid points")
+                logging.info("\tNot enough valid points")
         except:
-            print("\tCannot determine cloud base height");
+            logging.error("\tCannot determine cloud base height");
             return
-
+        return
 
 #############################################################################
 
@@ -560,12 +577,12 @@ def get_ncdf_prev_filename(filename_jpeg, tmpfs, timezone):
     Restores an image object from a NetCDF file
 """
 
-def restore_ncdf(camera, filename):
+def restore_ncdf(camera, filename, memory=None):
 
-    print("\tReading image file " + filename)
+    logging.info("\tReading image file " + filename)
     try:
 
-        root_grp = nc4.Dataset(filename, 'r', format='NETCDF4')  # 'r' stands for read
+        root_grp = nc4.Dataset(filename, 'r', memory=memory)  # 'r' stands for read
 
         if 'file_source' in root_grp.ncattrs():
             file_source = root_grp.getncattr('file_source')
@@ -596,8 +613,9 @@ def restore_ncdf(camera, filename):
 
         root_grp.close()
 
-    except:
-        print("\tAn error occurred reading the NetCDF file " + filename)
+    except Exception as e:
+        #raise e
+        logging.error("\tAn error occurred reading the NetCDF file " + filename + ": " + str(e))
         return None
 
     return img
@@ -612,15 +630,15 @@ def restore_ncdf(camera, filename):
         undistort_image
         save_netcdf
 """
-def process_image(args):
-    print("Processing image...")
+def process_image(args, inmemory=False):
+    logging.info("Processing image...")
 
     camera, filename_jpeg, path, overwrite = args
 
     # get file base name and remove extension
     filename_ncdf = get_ncdf_curr_filename(filename_jpeg, path)
 
-    if not os.path.isfile(filename_ncdf) or overwrite:
+    if ((not os.path.isfile(filename_ncdf)) or overwrite) or inmemory:
         # Create the image object
         img = image(filename_jpeg, camera)
         # Read the image file
@@ -631,42 +649,58 @@ def process_image(args):
             img.undistort_image()
         # Dump to NetCDF file (only if the image has been undistorted)
         if img.rgbu is not None:
-            img.save_netcdf(filename_ncdf)
+            nc_dat = img.save_netcdf(filename_ncdf, inmemory=inmemory)
+            return nc_dat
     else:
-        print("\tThe image " + filename_ncdf + " already exists")
+        logging.info("\tThe image " + filename_ncdf + " already exists")
 
 """
     Generates the bright mask
 """
 def process_bright_mask(args):
 
-    print("Remove small objects...")
+    logging.info("Remove small objects...")
 
     camera, filename_jpeg, path, overwrite = args
 
-    # Get NetCDF file names (current and previous)
-    filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
-    filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+    if type(filename_jpeg)==list:      #if working in diskless mode, (f_curr, f_prev) will be passed
+        try:
+            filename_curr, filename_prev, f_curr, f_prev = filename_jpeg  #filename_jpeg is a misnomer now, but left as-is for legacy
+        except Exception:
+            logging.info("ERROR: " + str(filename_jpeg))       
+        if f_curr is None:
+            logging.info("\tNo data for " + filename_curr)
+            return
+        if f_prev is None:
+            logging.info("\tNo data for " + filename_prev)
+            return
+    else:
+        # Get NetCDF file names (current and previous)
+        filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
+        filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+        f_curr = None    #Not working in diskless mode
+        f_prev = None
 
-    if not os.path.isfile(filename_curr):
-        print("\tNo such file " + filename_curr)
-        return
-    if not os.path.isfile(filename_prev):
-        print("\tNo such file " + filename_prev)
-        return
+        if not os.path.isfile(filename_curr):
+            logging.info("\tNo such file " + filename_curr)
+            return
+        if not os.path.isfile(filename_prev):
+            logging.info("\tNo such file " + filename_prev)
+            return
 
-    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4')
+    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4', memory=f_curr)
     hasvar = 'BrightMask' in root_grp.variables
     root_grp.close()
 
     if hasvar and not overwrite:
-        print("\tThe bright mask has already been defined")
+        logging.info("\tThe bright mask has already been defined, skipping")
         return
     else:
-        img_curr = restore_ncdf(camera, filename_curr)
-        img_prev = restore_ncdf(camera, filename_prev)
+        img_curr = restore_ncdf(camera, filename_curr, memory=f_curr)
+        img_prev = restore_ncdf(camera, filename_prev, memory=f_prev)
 
     if (img_curr is None) or (img_prev is None):
+        logging.info("\tCurrent or previous image could not be open, skipping")
         return
 
     with warnings.catch_warnings():
@@ -674,21 +708,22 @@ def process_bright_mask(args):
         img_curr.compute_bright_mask(img_prev)
 
     if img_curr.bright_mask is not None:
+        if f_curr is None:
+            root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4', memory=f_curr)  # 'a' stands for append
 
-        root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4')  # 'a' stands for append
-
-        if not hasvar:
-            print("\tWriting BrightMask")
-            bmsk = root_grp.createVariable('BrightMask', img_curr.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
-            bmsk.description = "Mask of small bright objects"
-            bmsk[:, :] = img_curr.bright_mask
+            if not hasvar:
+                logging.info("\tWriting BrightMask")
+                bmsk = root_grp.createVariable('BrightMask', img_curr.bright_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
+                bmsk.description = "Mask of small bright objects"
+                bmsk[:, :] = img_curr.bright_mask
+            else:
+                logging.info("\tOverwriting BrightMask")
+                root_grp.variables['BrightMask'][:, :] = img_curr.bright_mask
+            return root_grp.close()
         else:
-            print("\tOverwriting BrightMask")
-            root_grp.variables['BrightMask'][:, :] = img_curr.bright_mask
-
-        root_grp.close()
+            return img_curr.save_netcdf(filename_curr, inmemory=True)
     else:
-        print("\tThe bright mask could not be defined")
+        logging.warning("\tThe bright mask could not be defined for " + filename_curr)
 
 
 """
@@ -696,31 +731,42 @@ def process_bright_mask(args):
 """
 
 def process_cloud_mask(args):
-    print("Processing cloud mask...")
+    logging.info("Processing cloud mask...")
 
     camera, filename_jpeg, path, overwrite = args
 
-    # Get NetCDF file names (current and previous)
-    filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
-    filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+    if type(filename_jpeg)==list:      #if working in diskless mode, (f_curr, f_prev) will be passed
+        filename_curr, filename_prev, f_curr, f_prev = filename_jpeg  #filename_jpeg is a misnomer now, but left as-is for legacy
+        if f_curr is None:
+            logging.info("\tNo data for " + filename_curr)
+            return
+        if f_prev is None:
+            logging.info("\tNo data for " + filename_prev)
+            return
+    else:
+        # Get NetCDF file names (current and previous)
+        filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
+        filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+        f_curr = None    #Not working in diskless mode
+        f_prev = None
 
-    if not os.path.isfile(filename_curr):
-        print("\tNo such file " + filename_curr)
-        return
-    if not os.path.isfile(filename_prev):
-        print("\tNo such file " + filename_prev)
-        return
+        if not os.path.isfile(filename_curr):
+            logging.info("\tNo such file " + filename_curr)
+            return
+        if not os.path.isfile(filename_prev):
+            logging.info("\tNo such file " + filename_prev)
+            return
 
-    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4')
+    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4', memory=f_curr)
     hasvar = 'CloudMask' in root_grp.variables
     root_grp.close()
 
     if hasvar and not overwrite:
-        print("\tThe cloud mask has already been defined")
+        logging.info("\tThe cloud mask has already been defined")
         return
     else:
-        img_curr = restore_ncdf(camera, filename_curr)
-        img_prev = restore_ncdf(camera, filename_prev)
+        img_curr = restore_ncdf(camera, filename_curr, memory=f_curr)
+        img_prev = restore_ncdf(camera, filename_prev, memory=f_prev)
 
     if (img_curr is None) or (img_prev is None):
         return
@@ -730,52 +776,65 @@ def process_cloud_mask(args):
         img_curr.compute_cloud_mask(img_prev)
 
     if img_curr.cloud_mask is not None:
+        if f_curr is None:
+            root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4', memory=f_curr)  # 'a' stands for append
 
-        root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4')  # 'a' stands for append
-
-        if not hasvar:
-            print("\tWriting cloud mask")
-            cm = root_grp.createVariable('CloudMask', img_curr.cloud_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
-            cm.description = "Cloud mask"
-            cm[:, :] = img_curr.cloud_mask
+            if not hasvar:
+                logging.info("\tWriting cloud mask")
+                cm = root_grp.createVariable('CloudMask', img_curr.cloud_mask.dtype.str, ('x', 'y'), zlib=True, complevel=9, fill_value=0)
+                cm.description = "Cloud mask"
+                cm[:, :] = img_curr.cloud_mask
+            else:
+                logging.info("\tOverwriting cloud mask")
+                root_grp.variables['CloudMask'][:, :] = img_curr.cloud_mask
+            return root_grp.close()
         else:
-            print("\tOverwriting cloud mask")
-            root_grp.variables['CloudMask'][:, :] = img_curr.cloud_mask
-
-        root_grp.close()
+            return img_curr.save_netcdf(filename_curr, inmemory=True)
     else:
-        print("\tThe cloud mask could not be defined")
+        logging.warning("\tThe cloud mask could not be defined for " + filename_curr)
+        return f_curr
 
 """
     Computes cloud motion
 """
 
 def process_cloud_motion(args):
-    print("Processing cloud motion...")
-
+    logging.info("Processing cloud motion...")
+    #logging.getLogger().setLevel(logging.INFO)
     camera, filename_jpeg, path, overwrite = args
 
-    # Get NetCDF file names (current and previous)
-    filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
-    filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+    if type(filename_jpeg)==list:      #if working in diskless mode, (f_curr, f_prev) will be passed
+        filename_curr, filename_prev, f_curr, f_prev = filename_jpeg  #filename_jpeg is a misnomer now, but left as-is for legacy
+        if f_curr is None:
+            logging.warning("\tNo data for f_curr " + filename_curr)
+            return
+        if f_prev is None:
+            logging.warning("\tNo data for f_prev" + filename_neig)
+            return
+    else:
+        # Get NetCDF file names (current and previous)
+        filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
+        filename_prev = get_ncdf_prev_filename(filename_jpeg, path, camera.timezone)
+        f_curr = None    #Not working in diskless mode
+        f_prev = None
 
-    if not os.path.isfile(filename_curr):
-        print("\tNo such file " + filename_curr)
-        return
-    if not os.path.isfile(filename_prev):
-        print("\tNo such file " + filename_prev)
-        return
+        if not os.path.isfile(filename_curr):
+            logging.info("\tNo such file " + filename_curr)
+            return
+        if not os.path.isfile(filename_prev):
+            logging.info("\tNo such file " + filename_prev)
+            return  
 
-    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4')
+    root_grp = nc4.Dataset(filename_curr, 'r', format='NETCDF4', memory=f_curr)
     hasvar = 'CloudMotion' in root_grp.variables
     root_grp.close()
 
     if hasvar and not overwrite:
-        print("\tThe cloud motion has already been defined")
+        logging.info("\tThe cloud motion has already been defined")
         return
     else:
-        img_curr = restore_ncdf(camera, filename_curr)
-        img_prev = restore_ncdf(camera, filename_prev)
+        img_curr = restore_ncdf(camera, filename_curr, memory=f_curr)
+        img_prev = restore_ncdf(camera, filename_prev, memory=f_prev)
 
     if (img_curr is None) or (img_prev is None):
         return
@@ -783,51 +842,66 @@ def process_cloud_motion(args):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         img_curr.compute_cloud_motion(img_prev)
-
+    
     if len(img_curr.velocity) > 0:
+        if f_curr is None:
+            root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4', memory=f_curr)  # 'a' stands for append
 
-        root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4')  # 'a' stands for append
+            vel = np.asarray(img_curr.velocity)
 
-        vel = np.asarray(img_curr.velocity)
+            if not hasvar:
+                logging.info("\tWriting cloud motion")
+                vx, vy = vel.shape
+                root_grp.createDimension('vx', vx)
+                # root_grp.createDimension('vx', None) # define this dimension unlimited
+                root_grp.createDimension('vy', vy)
+                cm = root_grp.createVariable('CloudMotion', vel.dtype.str, ('vx', 'vy'), zlib=True, complevel=9)
+                cm.description = "Cloud motion"
+                cm[:, :] = vel
+            else:
+                logging.info("\tOverwriting cloud motion")
+                root_grp.variables['CloudMotion'][:, :] = vel
 
-        if not hasvar:
-            print("\tWriting cloud motion")
-            vx, vy = vel.shape
-            root_grp.createDimension('vx', vx)
-            # root_grp.createDimension('vx', None) # define this dimension unlimited
-            root_grp.createDimension('vy', vy)
-            cm = root_grp.createVariable('CloudMotion', vel.dtype.str, ('vx', 'vy'), zlib=True, complevel=9)
-            cm.description = "Cloud motion"
-            cm[:, :] = vel
+            return root_grp.close()
         else:
-            print("\tOverwriting cloud motion")
-            root_grp.variables['CloudMotion'][:, :] = vel
-
-        root_grp.close()
+            return img_curr.save_netcdf(filename_curr, inmemory=True)
     else:
-        print("\tThe cloud motion could not be defined")
+        logging.info("\tThe cloud motion could not be defined for " + filename_curr)
+        return f_curr
 
 """
     Computes cloud base height
 """
 
 def process_cloud_height(args):
-    print("Processing cloud height...")
-
+    logging.info("Processing cloud height...")
+    #logging.getLogger().setLevel(logging.INFO)
     camera_curr, camera_neig, filename_jpeg, path, overwrite = args
 
-    # The NetCDF file
-    filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
-    filename_neig = filename_curr.replace(camera_curr.camID, camera_neig.camID);
+    if type(filename_jpeg)==list:      #if working in diskless mode, (f_curr, f_prev) will be passed
+        filename_curr, filename_neig, f_curr, f_neigh = filename_jpeg  #filename_jpeg is a misnomer now, but left as-is for legacy
+        if f_curr is None:
+            logging.info("\tNo data for f_curr " + filename_curr)
+            return
+        if f_neigh is None:
+            logging.info("\tNo data for f_neigh" + filename_neig)
+            return
+    else:
+        # The NetCDF file
+        filename_curr = get_ncdf_curr_filename(filename_jpeg, path)
+        filename_neig = filename_curr.replace(camera_curr.camID, camera_neig.camID);
+        f_curr = None
+        f_neigh = None
 
-    if not os.path.isfile(filename_curr):
-        print("\tNo such file " + filename_curr)
-        return
-    if not os.path.isfile(filename_neig):
-        print("\tNo such file " + filename_neig)
-        return
-
-    img_curr = restore_ncdf(camera_curr, filename_curr)
+        if not os.path.isfile(filename_curr):
+            logging.info("\tNo such file " + filename_curr)
+            return
+        if not os.path.isfile(filename_neig):
+            logging.info("\tNo such file " + filename_neig)
+            return
+            
+    logging.info("Loading f_curr: " + filename_curr)
+    img_curr = restore_ncdf(camera_curr, filename_curr, memory=f_curr)
 
     if img_curr is None:
         return
@@ -836,41 +910,47 @@ def process_cloud_height(args):
     if (len(img_curr.cloud_base_height) > 0) and (len(img_curr.height_neighbours) > 0):
         hasvar = camera_neig.camID in img_curr.height_neighbours
         if hasvar and not overwrite:
-            print("\tThe cloud base height using the neighbour " + camera_neig.camID + " has already been defined")
+            logging.info("\tThe cloud base height using the neighbour " + camera_neig.camID + " has already been defined")
             return
-
-    img_neig = restore_ncdf(camera_neig, filename_neig)
+            
+    logging.info("Loading f_neigh: " + filename_neig)
+    img_neig = restore_ncdf(camera_neig, filename_neig, memory=f_neigh)
 
     if img_neig is None:
+        logging.info("Neighbor "+camera_neig.camID+" not found, skipping")
         return
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
         img_curr.compute_cloud_height(img_neig)
-
+    
+    logging.info(str(img_curr.cloud_base_height)+"   "+str(img_curr.height_neighbours))
+    
     if (len(img_curr.cloud_base_height) > 0) and (len(img_curr.height_neighbours) > 0) and (
             camera_neig.camID in img_curr.height_neighbours):
 
-        root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4')  # 'a' stands for append
+        if f_curr is None:
+            root_grp = nc4.Dataset(filename_curr, 'a', format='NETCDF4')  # 'a' stands for append
 
-        hgt = np.asarray(img_curr.cloud_base_height)
+            hgt = np.asarray(img_curr.cloud_base_height)
 
-        if 'CloudBaseHeight' not in root_grp.variables:
-            print("\tWriting cloud base height")
-            root_grp.createDimension('unlimited', None)
-            height = root_grp.createVariable('CloudBaseHeight', hgt.dtype.str, ('unlimited'))
-            height.description = "First detected cloud base height [m]"
-            height.neighbours = ",".join(img_curr.height_neighbours)
-            height[:] = hgt
+            if 'CloudBaseHeight' not in root_grp.variables:
+                logging.info("\tWriting cloud base height")
+                root_grp.createDimension('unlimited', None)
+                height = root_grp.createVariable('CloudBaseHeight', hgt.dtype.str, ('unlimited'))
+                height.description = "First detected cloud base height [m]"
+                height.neighbours = ",".join(img_curr.height_neighbours)
+                height[:] = hgt
+            else:
+                logging.info("\tOverwriting cloud base height")
+                root_grp.variables['CloudBaseHeight'][:] = hgt
+                root_grp.variables['CloudBaseHeight'].neighbours = ",".join(img_curr.height_neighbours)
+
+            return root_grp.close()
         else:
-            print("\tOverwriting cloud base height")
-            root_grp.variables['CloudBaseHeight'][:] = hgt
-            root_grp.variables['CloudBaseHeight'].neighbours = ",".join(img_curr.height_neighbours)
-
-        root_grp.close()
+            return img_curr.cloud_base_height, img_curr.height_neighbours #img_curr.save_netcdf(filename_curr, inmemory=True)
     else:
-        print("\tThe cloud base height could not be defined")
-
-    return
+        logging.info("\tThe cloud base height could not be defined for " + filename_curr)
+        return
 
 #############################################################################

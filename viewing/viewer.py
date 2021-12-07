@@ -59,11 +59,13 @@ class FileWidget(QWidget):
 
 
 class ImageArray(object):
-    def __init__(self, shape):
+    def __init__(self, shape, dtype=None, string=None):
         self.shape = shape
+        self.dtype = dtype
+        self.string = string
 
     def __str__(self):
-        return str(self.shape)
+        return str(self.shape) + ", dtype=" + str(self.dtype)
 
 
 class Viewer(QMainWindow):
@@ -148,25 +150,27 @@ class Viewer(QMainWindow):
     def loadNC(self, f):
         print("Loading: " + os.path.basename(f))
 
-        root_grp = nc4.Dataset(f, 'r', format='NETCDF4')
-        d_vars = dict(root_grp.variables)
-        d_out = {}
-        for k, v in d_vars.items():
-            if 'one' in v.dimensions:
-                d_out.update({k: v[:][0]})      #scalar
-            elif v.dimensions in (('x','y'),('x','y','z')):
-                d_out.update({k: ImageArray(v.shape)})                   #images
-            else:
-                d_out.update({k: v[:]})
+        with nc4.Dataset(f, 'r', format='NETCDF4') as root_grp:
+            d_vars = dict(root_grp.variables)
+            d_out = {}
+            for k, v in d_vars.items():
+                if 'one' in v.dimensions:
+                    d_out.update({k: v[:][0]})                          #scalar
+                elif v.dimensions in (('x','y'),('x','y','z')):
+                    d_out.update({k: [ImageArray(v.shape, v.dtype), str(v), v[500:510,500:510]]})     #images
+                else:
+                    d_out.update({k: v[:]})
 
-        self.widgets["vars"].setData(d_out)
+            self.widgets["vars"].setData(d_out)
 
-        nc_var_wids = {"RGBu":"w_rgbu","RGB":"w_rgbu","Red":"w_red","BrightMask":"w_br_mask","CloudMask":"w_cl_mask"}
-        for v,w in nc_var_wids.items():
-            try:
-                self.widgets[w].setImage(d_vars[v][:])
-            except KeyError:
-                pass
+            nc_var_wids = {"RGBu":"w_rgbu","RGB":"w_rgbu","Red":"w_red","BrightMask":"w_br_mask","CloudMask":"w_cl_mask"}
+            for v,w in nc_var_wids.items():
+                try:
+                    self.widgets[w].setImage(d_vars[v][:])
+                except KeyError:
+                    pass
+                except Exception as e:
+                    print ("Error processing " + v + ": " + str(e))
 
 if __name__ == '__main__':
     app = QtGui.QApplication([])

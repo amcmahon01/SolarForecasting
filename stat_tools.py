@@ -304,7 +304,7 @@ def lower_upper(x0,percentile=0.025):
     bcs=0.5*(bins[:-1]+bins[1:])
     total=np.sum(hist);  cumhist=np.cumsum(hist);
     lower=bcs[np.argmax(cumhist>percentile*total)];
-    upper=bcs[200-np.argmax(cumhist[::-1]<=(1-percentile)*total)]; 
+    upper=bcs[199-np.argmax(cumhist[::-1]<=(1-percentile)*total)]; 
     upper=max(lower,upper)
     return lower,upper
   
