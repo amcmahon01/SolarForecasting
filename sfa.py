@@ -38,7 +38,7 @@ def readConfig():
             sfaConnection["user"] = cp["sfaInfo"]["user"]
             sfaConnection["password"] = cp["sfaInfo"]["password"]
             sfaConnection["cachedToken"] = cp["sfaInfo"]["cachedToken"]
-            sfaConnection["maxTries"] = cp["sfaInfo"]["maxTries"]
+            sfaConnection["maxTries"] = le(cp["sfaInfo"]["maxTries"])
 
             reports = {}
             reports["provider"] = le(cp["reports"]["provider"])
@@ -81,6 +81,7 @@ def chunk(df, n):
     return {i+min(n, len(df[i:i+n])):df[i:i+n] for i in range(0,df.shape[0],n)}
 
 def syncObs():
+    logging.info("Syncing observations...")
     for sensor in sensors:
         #Sync observation metadata
         sensor["obs_name"] = sensor["site_name"] + " " + sensor["measurement"]  #Site name + measurement should be used for all observation names (ex: "LISF PB1 GHI")
@@ -103,23 +104,26 @@ def syncObs():
 
     logging.info("Done updating data.")
 
-def syncForecasts():
+def syncForecasts(reports_only=False):
+    logging.info("Syncing forecasts...")
+    forecasts = db_engine.getForecasts()
     for forecast in forecasts:
         #Sync forecast metadata
         try:
-            site_name = next(item["name"] for item in sites if item["site_id"] == forecast["site_id"])
+            site = next(item for item in sites if item["site_id"] == forecast["site_id"])
         except KeyError:
             logging.warning("Site id " + str(forecast["site_id"]) + " not found, skipping.")
             continue
-
-        forecast["forecast_name"] = site_name + " " + str(forecast["lead_time"]) + "min " + forecast["variable"]  #Site name + lead time + measurement should be used for all forecast names (ex: "LISF PB1 10min GHI")
-        forecast["site"] = site_d[site_name]                              #Associate SFA site record
+        if reports_only and (forecast["lead_time"] not in config["reports"]["lead_times"]):
+            continue
+        forecast["forecast_name"] = forecast["name"] + " " + site["name"] + " " + str(forecast["lead_time"]) + "min " + forecast["variable"]  #Site name + lead time + measurement should be used for all forecast names (ex: "LISF PB1 10min GHI")
+        forecast["site"] = site_d[site["name"]]                              #Associate SFA site record
         if forecast["forecast_name"] not in forecasts_d.keys():           #Check which records are new    ****FUTURE: Should change to use UUID instead/in addition to****
             result = sfa_session.addForecast(forecast)                    #Add missing forecasts
             #db_engine.updateForecasts(result)                            ****FUTURE: Update local metadata
             forecasts_d.update({forecast["forecast_name"]:result})        #Add to local dict
         elif config["forecast"]["overwrite_existing"]:
-            logging.info("Existing forecast found for " + forecast["forecast_name"])
+            logging.info("Existing forecast found for %s, deleting (overwrite_existing=True)" % forecast["forecast_name"])
             old_uuid = forecasts_d[forecast["forecast_name"]].forecast_id
             result = sfa_session.deleteForecast(old_uuid)
             if result == 204:
@@ -130,6 +134,9 @@ def syncForecasts():
             result = sfa_session.addForecast(forecast)                    #Add missing forecasts
             #db_engine.updateForecasts(result)                            ****FUTURE: Update local metadata
             forecasts_d.update({forecast["forecast_name"]:result})        #Add to local dict
+        else:
+            logging.info("Existing forecast found for %s, skipping (overwrite_existing=False)" % forecast["forecast_name"])
+            continue
 
         #Sync forecast data
         forecast_uuid = forecasts_d[forecast["forecast_name"]].forecast_id                            #Get forecast UUID now that all should be in the local dict
@@ -145,11 +152,32 @@ def syncForecasts():
     logging.info("Done updating data.")
 
 def syncSites():
+    logging.info("Syncing sites...")
     for s in sites:
         if s["name"] not in site_d.keys():                            #Check which records are new    ****FUTURE: Should change to use UUID instead/in addition to****
             site_result = sfa_session.addSite(s)                      #Add missing sites
             db_engine.updateSite(site_result)
             site_d.update({s["name"]:site_result})                    #Add to local site dict
+
+def generatePersistence():
+    logging.info("Generating persistence metadata... \
+                \n\tUsing lead times: " + str(config["reports"]["lead_times"]) \
+                + "\n\tUsing sensors: " + str(config["forecast"]["sensors"]) )
+                
+    for lead_time in config["reports"]["lead_times"]:
+        for sensor_id in config["forecast"]["sensors"]:
+            sensor = next(item for item in sensors if item["sensor_id"] == sensor_id)
+            try:
+                site = next(item for item in sites if item["site_id"] == sensor["site_id"])
+            except KeyError:
+                logging.warning("Site id " + str(sensor["site_id"]) + " not found, skipping.")
+                continue
+            forecast_name = "Persistence " + site["name"] + " " + str(lead_time) + "min " + sensor["measurement"]
+            forecast_names = [f["name"] + " " + site["name"] + " " + str(lead_time) + "min " + sensor["measurement"] for f in forecasts if site["site_id"]==f["site_id"] and lead_time==f["lead_time"]]
+            if forecast_name in forecast_names:
+                logging.info("\t%s already exists, skipping." % forecast_name)
+            else:
+                db_engine.createPersistence(sensor, lead_time, site["name"])
 
 def generateReports():
     logging.info("Generating reports...\n\tUpdating observation and forecast lists")
@@ -186,14 +214,20 @@ def generateReports():
                 continue
 
             f_start, f_end = sfa_session.getForecastTimeRange(sfa_for.forecast_id)
+            forecast_ref = None
             try:
                 r_start = min(r_start, f_start)
                 r_end = max(r_end, f_end)
             except TypeError:
                 r_start = f_start
                 r_end = f_end
-
-            forecast_obs += [sfa_dm.ForecastObservation(sfa_for, obs)]
+            try:
+                if "persistence" not in f_name.lower():
+                    ref_name = "Persistence " + sfa_site.name + " " + str(lead_time) + "min " + sfa_for.variable
+                    forecast_ref = forecasts_d[ref_name]
+            except KeyError:
+                logging.warning("\tPersistence forecast not found, reference forecast will not be included")                
+            forecast_obs += [sfa_dm.ForecastObservation(sfa_for, obs, forecast_ref)]
             logging.info("\t%s: Added to report" % f_name)
 
         logging.info("Generating report for %d forecasts from %s to %s" % (len(forecast_obs), r_start.strftime("%Y-%m-%d %H:%M:%S"), r_end.strftime("%Y-%m-%d %H:%M:%S")))
@@ -207,25 +241,42 @@ def generateReports():
 class SFA():
 
     def __init__(self, config):
+        self.config = config
         self.max_tries = config["maxTries"]
         self.upload_error_count = {}            #Tracks upload errors per observation
-        try:
-            #sfa_tok = config["cachedToken"]
-            with open("sfa_token.txt", 'r') as f:
-                sfa_tok = f.readline()
-            self.session = sfa_api.APISession(sfa_tok)
-            self.session.get_user_info()        #Make sure token is still valid
-            logging.info("Using cached token")
-        except (KeyError, Exception):
-            #Get a new token
-            logging.info("Getting new token")
-            sfa_tok = sfa_api.request_cli_access_token(config["user"],config["password"])
-            self.session = sfa_api.APISession(sfa_tok)
-            with open("sfa_token.txt", 'w') as f:
-                f.write(sfa_tok)
-                logging.info("\tCached for future requests")
-            logging.debug("SFA Token: " + sfa_tok)
-        self.cachedToken = sfa_tok
+        self.connect()
+    
+    def connect(self):
+        logging.info("Connecting to Solar Forecast Arbiter...")
+
+        for attempt in range(0,self.max_tries):
+            try:        
+                try:
+                    #sfa_tok = config["cachedToken"]
+                    with open("sfa_token.txt", 'r') as f:
+                        sfa_tok = f.readline()
+                    self.session = sfa_api.APISession(sfa_tok)
+                    self.session.get_user_info()        #Make sure token is still valid
+                    logging.info("Using cached token")
+                except (KeyError, Exception):
+                    #Get a new token
+                    logging.info("Getting new token")
+                    sfa_tok = sfa_api.request_cli_access_token(self.config["user"],self.config["password"])
+                    self.session = sfa_api.APISession(sfa_tok)
+                    with open("sfa_token.txt", 'w') as f:
+                        f.write(sfa_tok)
+                        logging.info("\tCached for future requests")
+                    logging.debug("SFA Token: " + sfa_tok)
+                self.cachedToken = sfa_tok
+
+                #verify connection
+                self.session.get_user_info()
+                return
+            except Exception as e:
+                logging.error("Error connecting, trying again in 5 seconds (%i/%i)" % (attempt, self.max_tries))
+                time.sleep(5)
+        logging.error("Max tries exceeded, cannot continue.")
+        exit()
 
     def getSites(self):
         sfa_site_list = self.session.list_sites()
@@ -286,7 +337,7 @@ class SFA():
         sfa_obs = sfa_dm.Forecast(name=forecast["forecast_name"], variable=forecast["variable"].lower(), issue_time_of_day=forecast["issue_start_datetime"].round('1min').strftime("%H:%M"),
                                   lead_time_to_start=pd.Timedelta(minutes=forecast["lead_time"]), run_length=pd.Timedelta(minutes=1),
                                   interval_value_type='interval_mean', interval_length=pd.Timedelta('0 days 00:01:00'), interval_label='ending', site=forecast["site"])
-        logging.info("Adding forecast: " + str(sfa_obs))
+        logging.info("Adding forecast: " + sfa_obs.name)
         sfa_obs = self.session.create_forecast(sfa_obs)
         return sfa_obs
 
@@ -296,19 +347,26 @@ class SFA():
         
     def addForecastData(self, df, forecast_uuid):
         #temp = df.copy()    #Seems like there should be a more effecient way to do this, but since df is already a slice...
-        try:
-            self.session.post_forecast_values(forecast_uuid, df["value"])
-            logging.info("\tUploaded " + str(len(df["value"])) + " rows")
-            self.upload_error_count.update({forecast_uuid: 0})             #Clear error count
-        except Exception as e:
-            logging.error("Error uploading: " + str(e))
+        for attempt in range(0,self.max_tries):      
             try:
-                if self.upload_error_count[forecast_uuid] >= self.max_tries:
-                    raise Exception("Max tries exceeded: " + str(e))
-                self.upload_error_count[forecast_uuid] += 1
-            except KeyError:
-                self.upload_error_count[forecast_uuid] = 1
-        return
+                self.session.post_forecast_values(forecast_uuid, df["value"])
+                logging.info("\tUploaded " + str(len(df["value"])) + " rows")
+                self.upload_error_count.update({forecast_uuid: 0})             #Clear error count
+                return
+            except Exception as e:
+                logging.error("Error uploading: " + str(e))
+                
+                if "UNAUTHORIZED" in str(e):
+                    logging.info("Attempting to reconnect...")
+                    self.connect()
+                try:
+                    if self.upload_error_count[forecast_uuid] >= int(self.max_tries):
+                        break
+                        #raise Exception("Max tries exceeded: " + str(e))
+                    self.upload_error_count[forecast_uuid] += 1
+                except KeyError:
+                    self.upload_error_count[forecast_uuid] = 1
+        logging.error("Max tries exceeded, skipping")
 
     def generateReport(self, r_name, r_start, r_end, forecast_obs):
 
@@ -348,5 +406,6 @@ if __name__ == "__main__":
 
     syncSites()
     #syncObs()
-    #syncForecasts()
-    generateReports()
+    #generatePersistence()
+    syncForecasts(reports_only=True)
+    #generateReports()

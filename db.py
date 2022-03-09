@@ -1,5 +1,6 @@
 from datetime import timedelta
 import logging
+from sqlite3 import OperationalError
 import pandas as pd
 from sqlalchemy import create_engine
 import pymysql
@@ -16,6 +17,9 @@ class DBengine():
             sites = pd.read_sql_table('sites', self.engine)
             site_d = sites.to_dict('records')
             return site_d
+        except OperationalError as e:
+            logging.error("Error getting sites: " + str(e))
+            exit()
         except Exception as e:
             logging.error("Error getting sites: " + str(e))
             raise e
@@ -53,12 +57,30 @@ class DBengine():
             q_dt = " AND NOT (TIMESTAMP BETWEEN '" + start_dt + "' AND '" + end_dt + "')"
         except (KeyError, ValueError):
             q_dt = ""
-        data = pd.read_sql('SELECT TIMESTAMP, value FROM forecasts WHERE forecast_config=' + str(forecast["config_id"]) + q_dt + " ORDER BY TIMESTAMP ASC", self.engine)
+        if "persistence" in forecast["forecast_name"].lower():
+            data = pd.read_sql('SELECT DATE_ADD(TIMESTAMP,INTERVAL '+ str(forecast["lead_time"]) +' MINUTE) as TIMESTAMP, value FROM observations_1min_avg WHERE sensor_id=' + str(forecast["sensor_id"]) + q_dt + " ORDER BY TIMESTAMP ASC", self.engine)
+        else:
+            data = pd.read_sql('SELECT TIMESTAMP, value FROM forecasts WHERE forecast_config=' + str(forecast["config_id"]) + q_dt + " ORDER BY TIMESTAMP ASC", self.engine)
         data.set_index(data["TIMESTAMP"], inplace=True)
         data.drop(columns="TIMESTAMP", inplace=True)
         data = data.tz_localize("EST")
         logging.info("\tRecords found: " + str(len(data)))
         return data
+
+    def getPersistence(self, sensor, lead_time):
+        logging.info("Getting data for " + sensor["obs_name"] + ", lead time " + str(lead_time) + " mins")
+        try:    #Check for exclusion range  ****FUTURE: Add "value gaps" check
+            start_dt = sensor["start_dt"].tz_convert("EST").strftime("%Y-%m-%d %H:%M:%S")
+            end_dt = sensor["end_dt"].tz_convert("EST").strftime("%Y-%m-%d %H:%M:%S")
+            q_dt = " AND NOT (TIMESTAMP BETWEEN '" + start_dt + "' AND '" + end_dt + "')"
+        except (KeyError, ValueError):
+            q_dt = ""
+        data = pd.read_sql('SELECT DATE_ADD(TIMESTAMP,INTERVAL '+ str(lead_time) +' MINUTE) as TIMESTAMP, value, quality_flag FROM observations_1min_avg WHERE sensor_id=' + str(sensor["sensor_id"]) + q_dt, self.engine)
+        data.set_index(data["TIMESTAMP"], inplace=True)
+        data.drop(columns="TIMESTAMP", inplace=True)
+        data = data.tz_localize("EST")
+        logging.info("\tRecords found: " + str(len(data)))
+        return data   
 
     def updateSite(self, site):
         logging.info("Updating metadata for " + site.name)
@@ -74,7 +96,7 @@ class DBengine():
     
     def updateForecast(self, forecast):
         logging.info("Updating metadata for " + forecast.name)
-        query = 'UPDATE forecast_configs SET sfa_obs_id="' + forecast.observation_id + '" WHERE sensors.name="' + forecast.name + '"'
+        query = 'UPDATE forecast_configs SET sfa_obs_id="' + forecast.forecast_id + '" WHERE sensors.name="' + forecast.name + '"'
         result = self.engine.execute(query)
         return result
 
@@ -92,6 +114,23 @@ class DBengine():
 
         return result
 
+    def createPersistence(self, sensor, lead_time, site_name):
+        forecast_name = "Persistence " + site_name + " " + str(lead_time) + "min " + sensor["measurement"]
+        logging.info("\tGetting information for " + forecast_name)
+
+        issue_start_datetime = pd.read_sql('SELECT TIMESTAMP FROM observations_1min_avg WHERE sensor_id=' + str(sensor["sensor_id"]) + ' ORDER BY TIMESTAMP ASC LIMIT 1', self.engine)
+        start_datetime = issue_start_datetime.astype('Datetime64') + pd.Timedelta(str(lead_time)+'min')
+        end_datetime = pd.read_sql('SELECT TIMESTAMP FROM observations_1min_avg WHERE sensor_id=' + str(sensor["sensor_id"]) + ' ORDER BY TIMESTAMP DESC LIMIT 1', self.engine)    
+        
+        fields = ["Persistence", str(sensor["sensor_id"]), str(issue_start_datetime.astype('Datetime64')['TIMESTAMP'][0]), str(lead_time), str(start_datetime.astype('Datetime64')['TIMESTAMP'][0]), str(end_datetime.astype('Datetime64')['TIMESTAMP'][0]), 'ghi']
+        #logging.debug(fields)
+
+        query = 'INSERT INTO forecast_configs (name, sensor_id, issue_start_datetime, lead_time, start_datetime, end_datetime, variable) VALUES ("' \
+        + '","'.join(fields) + '")'
+
+        result = self.engine.execute(query)
+        logging.info("\tAdded " + str(result.rowcount) + " rows.")
+
     def createForecast(self, fname):
         logging.info("Creating forecast for " + fname)
         
@@ -107,7 +146,7 @@ class DBengine():
         forecast_name = fname.split("forecast_")[-1].split("_" + str(lead_time) + "_total.csv")[0]
 
         fields = [forecast_name, str(sensor_id), issue_start_datetime, str(lead_time), start_datetime, end_datetime, 'ghi']
-        logging.debug(fields)
+        #logging.debug(fields)
 
         query = 'INSERT INTO forecast_configs (name, sensor_id, issue_start_datetime, lead_time, start_datetime, end_datetime, variable) VALUES ("' \
                 + '","'.join(fields) + '")'
@@ -120,7 +159,6 @@ class DBengine():
         logging.info("config_id: " + str(config_id))
 
         return config_id
-
 
     def loadForecastData(self, fname, forecast_config):
         #create forecast
