@@ -78,6 +78,20 @@ class DBengine():
         result = self.engine.execute(query)
         return result
 
+    def loadObsData(self, fname, sensor_id, pad_fields=3, ignore_lines=4):
+        #create forecast
+        fname = fname.replace("\\", "/") #make sql happy
+
+        # Note: ESCAPED BY '' is used instead of ESCAPED BY '"' because of an ancient bug (https://bugs.mysql.com/bug.php?id=39247)
+        q = "LOAD DATA CONCURRENT LOCAL INFILE '" + fname \
+            + "' IGNORE INTO TABLE `observations_1sec` FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY \'\"\' ESCAPED BY \'\' LINES TERMINATED BY '\n' IGNORE " \
+            + str(ignore_lines) + " LINES (`TIMESTAMP`," + "@dummy,"*pad_fields + "`value`) SET sensor_id = " + str(sensor_id)
+
+        result = self.engine.execute(q)
+        logging.info("\tLoaded " + str(result.rowcount) + " rows.")
+
+        return result
+
     def createForecast(self, fname):
         logging.info("Creating forecast for " + fname)
         
