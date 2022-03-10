@@ -223,7 +223,9 @@ def generateReports():
         logging.info("  For %i min lead time, %i forecasts" % (lead_time, len(forecasts_grouped)))
 
         forecast_obs = []
+        ref_forecast_obs = []
         r_name = config["forecast"]["config_name"] + " " + str(lead_time) + "min"
+        r_ref_name = "Persistence " + str(lead_time) + "min"
         r_start = None
         r_end = None
 
@@ -253,7 +255,7 @@ def generateReports():
                 ref_name = "Persistence " + sfa_site.name + " " + str(lead_time) + "min " + sfa_for.variable
                 forecast_ref = forecasts_with_refs_d[ref_name]
                 if config["reports"]["include_persistence"]:
-                    forecast_obs += [sfa_dm.ForecastObservation(forecast_ref, obs)]
+                    ref_forecast_obs += [sfa_dm.ForecastObservation(forecast_ref, obs)]
                     logging.info("\tIncluding persistence: " + ref_name)
             except KeyError:
                 logging.warning("\tPersistence forecast not found, reference forecast will not be included")                
@@ -263,9 +265,16 @@ def generateReports():
         logging.info("Generating report for %d forecasts from %s to %s" % (len(forecast_obs), r_start.strftime("%Y-%m-%d %H:%M:%S"), r_end.strftime("%Y-%m-%d %H:%M:%S")))
         result = sfa_session.generateReport(r_name, r_start, r_end, forecast_obs)
         try:
-            logging.info("Report ID: %s\tStatus: %s" % (result.report_id, result.status))
+            logging.info("\tReport ID: %s\tStatus: %s" % (result.report_id, result.status))
         except Exception as e:
             logging.warning("\tError generating report, did not receive info from Arbiter")
+        
+        logging.info("Generating reference report for %d forecasts from %s to %s" % (len(ref_forecast_obs), r_start.strftime("%Y-%m-%d %H:%M:%S"), r_end.strftime("%Y-%m-%d %H:%M:%S")))
+        result = sfa_session.generateReport(r_ref_name, r_start, r_end, ref_forecast_obs)
+        try:
+            logging.info("\tReport ID: %s\tStatus: %s" % (result.report_id, result.status))
+        except Exception as e:
+            logging.warning("\tError generating report, did not receive info from Arbiter")       
 
 
 class SFA():
@@ -375,7 +384,6 @@ class SFA():
         return result
         
     def addForecastData(self, df, forecast_uuid):
-        #temp = df.copy()    #Seems like there should be a more effecient way to do this, but since df is already a slice...
         for attempt in range(0,self.max_tries):      
             try:
                 self.session.post_forecast_values(forecast_uuid, df["value"])
@@ -384,7 +392,6 @@ class SFA():
                 return
             except Exception as e:
                 logging.error("Error uploading: " + str(e))
-                
                 if "UNAUTHORIZED" in str(e):
                     logging.info("Attempting to reconnect...")
                     self.connect()
