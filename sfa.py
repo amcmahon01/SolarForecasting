@@ -37,7 +37,6 @@ def readConfig():
             sfaConnection = {}
             sfaConnection["user"] = cp["sfaInfo"]["user"]
             sfaConnection["password"] = cp["sfaInfo"]["password"]
-            sfaConnection["cachedToken"] = cp["sfaInfo"]["cachedToken"]
             sfaConnection["maxTries"] = le(cp["sfaInfo"]["maxTries"])
 
             reports = {}
@@ -283,7 +282,6 @@ class SFA():
         for attempt in range(0,self.max_tries):
             try:        
                 try:
-                    #sfa_tok = config["cachedToken"]
                     with open("sfa_token.txt", 'r') as f:
                         sfa_tok = f.readline()
                     self.session = sfa_api.APISession(sfa_tok)
@@ -441,4 +439,4 @@ if __name__ == "__main__":
     syncObs()
     generatePersistence()
     syncForecasts(reports_only=True)
-    #generateReports()
+    generateReports()
