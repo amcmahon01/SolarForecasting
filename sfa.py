@@ -45,6 +45,7 @@ def readConfig():
             reports["variables"] = le(cp["reports"]["variables"])
             reports["metrics"] = le(cp["reports"]["metrics"])
             reports["lead_times"] = le(cp["reports"]["lead_times"])
+            reports["include_persistence"] = le(cp["reports"]["include_persistence"])
 
             forecast = {}
             forecast["overwrite_existing"] = le(cp["forecast"]["overwrite_existing"])
@@ -69,7 +70,10 @@ def fillMissing(df, freq="1Min", method=None, indexCol="TIMESTAMP", replaceIndex
     else:
         new_idx =  pd.date_range(start=df.index.min(), end=df.index.max(), freq=freq)
 
-    df_reindexed = df.reindex(new_idx, method=method, tolerance=pd.Timedelta(freq)/2)
+    if method in ('pad','backfill','nearest'):
+        df_reindexed = df.reindex(new_idx, method=method, tolerance=pd.Timedelta(freq)/2)
+    else:
+        df_reindexed = df.reindex(new_idx, method=method)
 
     if replaceIndexCol:
         df_reindexed[indexCol] = df_reindexed.index
@@ -95,6 +99,8 @@ def syncObs():
         obs_uuid = obs_d[sensor["obs_name"]].observation_id           #Get observation UUID now that all should be in the local dict
         sensor["start_dt"], sensor["end_dt"] = sfa_session.getObservationTimeRange(obs_uuid)    #Get existing data range (to be excluded from upload)
         data = db_engine.getObsData(sensor)                              #Warning: Could be very large
+        if data is None:
+            continue
         filled_data = fillMissing(data)
         total_len = len(filled_data)
         logging.info("Uploading " + str(total_len) + " rows to " + sensor["obs_name"] + " (" + obs_uuid + ")")
@@ -182,16 +188,36 @@ def generatePersistence():
 def generateReports():
     logging.info("Generating reports...\n\tUpdating observation and forecast lists")
     sfa_obs = sfa_session.listObservations()
-    sfa_forecasts = sfa_session.listForecasts()
+    sfa_forecasts_unfiltered = sfa_session.listForecasts()
 
     r_sensor_sites = {s["site_id"]:s for s in sensors if s["sensor_id"] in config["forecast"]["sensors"]}
     r_sites = {s["name"]:s for s in sites if s["site_id"] in r_sensor_sites.keys()}
-    sfa_forecasts = [f for f in sfa_forecasts if f.provider==config["reports"]["provider"]
-                                                 and int(f.lead_time_to_start.total_seconds()/60) in config["reports"]["lead_times"]
-                                                 and f.site.name in r_sites.keys()]
+
+    sfa_forecasts = []
+    sfa_forecasts_with_refs = []
+    for f in sfa_forecasts_unfiltered:
+        try:
+            if f.provider==config["reports"]["provider"] \
+                and int(f.lead_time_to_start.total_seconds()/60) in config["reports"]["lead_times"] \
+                and f.site.name in r_sites.keys():
+                sfa_forecasts_with_refs += [f]
+                if config["forecast"]["config_name"] in f.name:
+                    sfa_forecasts += [f]
+        except Exception as e:
+            continue
+
+    if len(sfa_obs)==0:
+        logging.warning("No observations, cannot create report")
+        return
+    if len(sfa_forecasts)==0:
+        logging.warning("No forecasts, cannot create report")
+        return
+
     obs_d = {n.name: n for n in sfa_obs}
     forecasts_d = {n.name: n for n in sfa_forecasts}
-    logging.info("Found %i observations and %i forecasts" % (len(sfa_obs), len(sfa_forecasts)))
+    forecasts_with_refs_d = {n.name: n for n in sfa_forecasts_with_refs}
+
+    logging.info("Found %i observations and %i/%i forecasts" % (len(sfa_obs), len(sfa_forecasts), len(sfa_forecasts_unfiltered)))
 
     for lead_time in config["reports"]["lead_times"]:
         forecasts_grouped = {k:f for k,f in forecasts_d.items() if int(f.lead_time_to_start.total_seconds()/60)==lead_time}
@@ -206,6 +232,9 @@ def generateReports():
             sfa_site = sfa_for.site
             obs_name = sfa_site.name + " " + sfa_for.variable.upper()
             f_name = sfa_for.name
+
+            if "persistence" in f_name.lower():
+                continue    #skip persistence forecasts
 
             try:
                 obs = obs_d[obs_name]
@@ -222,9 +251,11 @@ def generateReports():
                 r_start = f_start
                 r_end = f_end
             try:
-                if "persistence" not in f_name.lower():
-                    ref_name = "Persistence " + sfa_site.name + " " + str(lead_time) + "min " + sfa_for.variable
-                    forecast_ref = forecasts_d[ref_name]
+                ref_name = "Persistence " + sfa_site.name + " " + str(lead_time) + "min " + sfa_for.variable
+                forecast_ref = forecasts_with_refs_d[ref_name]
+                if config["reports"]["include_persistence"]:
+                    forecast_obs += [sfa_dm.ForecastObservation(forecast_ref, obs)]
+                    logging.info("\tIncluding persistence: " + ref_name)
             except KeyError:
                 logging.warning("\tPersistence forecast not found, reference forecast will not be included")                
             forecast_obs += [sfa_dm.ForecastObservation(sfa_for, obs, forecast_ref)]
@@ -257,10 +288,10 @@ class SFA():
                         sfa_tok = f.readline()
                     self.session = sfa_api.APISession(sfa_tok)
                     self.session.get_user_info()        #Make sure token is still valid
-                    logging.info("Using cached token")
+                    logging.info("\tUsing cached token")
                 except (KeyError, Exception):
                     #Get a new token
-                    logging.info("Getting new token")
+                    logging.info("\tGetting new token")
                     sfa_tok = sfa_api.request_cli_access_token(self.config["user"],self.config["password"])
                     self.session = sfa_api.APISession(sfa_tok)
                     with open("sfa_token.txt", 'w') as f:
@@ -378,6 +409,8 @@ class SFA():
 
         return result
         
+    def listReports(self):
+        return self.session.list_reports()
 
 
 if __name__ == "__main__":
@@ -405,7 +438,7 @@ if __name__ == "__main__":
     forecasts_d = {n.name: n for n in sfa_forecasts}
 
     syncSites()
-    #syncObs()
-    #generatePersistence()
+    syncObs()
+    generatePersistence()
     syncForecasts(reports_only=True)
     #generateReports()

@@ -34,14 +34,21 @@ class DBengine():
         try:    #Check for exclusion range  ****FUTURE: Add "value gaps" check
             start_dt = sensor["start_dt"].tz_convert("EST").strftime("%Y-%m-%d %H:%M:%S")
             end_dt = sensor["end_dt"].tz_convert("EST").strftime("%Y-%m-%d %H:%M:%S")
-            q_dt = " AND NOT (TIMESTAMP BETWEEN '" + start_dt + "' AND '" + end_dt + "')"
+            #add/subtract 30 seconds here to account for rounded data on the Arbiter
+            q_dt = " AND NOT (DATE_ADD(TIMESTAMP, INTERVAL 30 SECOND) >= '" + start_dt + "' AND DATE_SUB(TIMESTAMP, INTERVAL 30 SECOND) <= '" + end_dt + "')"
         except (KeyError, ValueError):
             q_dt = ""
-        data = pd.read_sql('SELECT TIMESTAMP, value, quality_flag FROM observations_1min_avg WHERE sensor_id=' + str(sensor["sensor_id"]) + q_dt, self.engine)
+        data = pd.read_sql("SELECT TIMESTAMP, value, quality_flag FROM observations_1min_avg WHERE sensor_id=" + str(sensor["sensor_id"]) + q_dt, self.engine)
+        logging.info("\tRecords found: " + str(len(data)))
+        if len(data)==0:
+            return None
         data.set_index(data["TIMESTAMP"], inplace=True)
         data.drop(columns="TIMESTAMP", inplace=True)
-        data = data.tz_localize("EST")
-        logging.info("\tRecords found: " + str(len(data)))
+        if data.index[0] <= pd.Timestamp(start_dt) and data.index[-1] >= pd.Timestamp(end_dt):
+            logging.warning("\tData found before and after existing, only keeping data after " + end_dt)
+            data = data[data.index>pd.Timestamp(end_dt)]
+            logging.info("\tRecords remaining: " + str(len(data)))
+        data = data.tz_localize("EST")      
         return data
 
     def getForecasts(self):
