@@ -8,38 +8,38 @@
 3. Remove (base) from the terminal 
     - conda config --set auto_activate_base false
 4. Create an environment for the project     
-    - conda create -n solar python=3.5
+    - conda create -n solar python=3.9
 5. Activate the environment    
     - conda activate solar
 6. Upgrade pip    
     - pip install --upgrade pip
-7. Install all dependencies  
-    - conda install numpy pandas scipy matplotlib scikit-image ephem
-    - conda install pytables -c conda-forge 
-    - pip install rolling pyfftw sklearn pvlib
-8. Edit the file config.conf file with your paths and number of processors. You can also select only one day, i.e. 201812019). Now you'll be able to run the code    
-    - python preprocess.py    
-    - python generate_stitch.py    
-    - python extract_features.py
-    - python predict.py
+7. Install dependencies
 
-## Update: The rolling package is not compatible with stat_tools
+    Base dependencies:
+    - conda install numpy pandas scipy matplotlib scikit-image ephem netcdf4 pytz ray[default] cython pvlib
+    - conda install pytables -c conda-forge
+    - conda install pyfftw -c conda-forge
+    - pip install sklearn
+   
+    Dependencies for the data viewer:
+    - conda install pyqt5 pyqtgraph
+    
+    Dependencies for database and Solar Forecast Aribiter connection:
+    - conda install tzdata sqlalchemy pymysql
+    - pip install solarforecastarbiter
 
-1. Activate the environment    
-    - conda activate solar
-2. Remove the package 
-    - pip uninstall rolling
-3. Install cython
-    - pip install cython
-4. Install rolling (pointing to the 'rolling' folder provided) 
-    - pip install rolling
+8. Build "rolling" binary:
+    - cd \<SolarForecastingDir\>/rolling
+    - python setup.py install
 
-## Update: netcdf4 is required
+9. Edit the file config.conf file with your paths and configuration. (Dates can be a single day, i.e. 201812019, or a range.)
+10. Run the code:    
+    - python process_pipeline.py    
+    - python forecast_and_validate.py    
+    - python sfa.py
 
-1. Install netcdf4
-    - conda install netcdf4
 
 ## Algorithm flowchart
 
-<img src="Solar_Forecasting_Functional_Flow_7-15-2020.png">
+<img src="Software_Overview.png">
 
